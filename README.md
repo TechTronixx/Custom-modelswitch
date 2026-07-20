@@ -18,21 +18,21 @@ fallbacks. Every config file is backed up before it's touched.
 
 ## Install
 
-1. Download or clone this folder anywhere on your machine:
-   ```powershell
-   git clone <your-repo-url>
-   cd "Custom AI Config"
-   ```
-   Or just download `AI-Config-Manager.ps1` and `AI-Config-Presets.json` into the
-   same folder.
+**One-click** (downloads to `~/AI-Config-Manager` and launches):
 
-2. Run it:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
-   ```
+```powershell
+irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
+```
 
-No install step, no dependencies. `AI-Config-Presets.json` must stay next to the
-script.
+Or clone and run manually:
+
+```powershell
+git clone https://github.com/TechTronixx/Custom-modelswitch.git
+cd Custom-modelswitch
+powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
+```
+
+No dependencies. `AI-Config-Presets.json` must stay next to the script.
 
 ## Usage
 
