@@ -118,6 +118,16 @@ Found a bug or want a new gateway/tool? [Open an issue](https://github.com/TechT
 issue templates are provided for bug reports and feature requests. Questions and
 ideas can go in [Discussions](https://github.com/TechTronixx/Custom-modelswitch/discussions).
 
+## Disclaimer
+
+This tool edits your own config files to point Claude Code, OpenCode, Codex, and
+Hermes at a gateway you choose. It does not bypass authentication or pirate
+access — you supply your own API keys. Routing official clients to third-party
+endpoints may violate those tools' Terms of Service and can result in account
+bans or service termination. You are responsible for complying with your
+gateway's and each tool's terms. The software is provided "AS IS" without
+warranty; the author is not liable for any damage, bans, or service loss.
+
 ## License
 
-No license specified.
+MIT — see [LICENSE](LICENSE).
