@@ -1,0 +1,105 @@
+# AI Config Manager
+
+Terminal UI to point your AI coding tools at a custom gateway.
+
+Configures **Claude Code**, **OpenCode**, and **Codex** to use any
+OpenAI/Anthropic-compatible endpoint — a self-hosted proxy, a model aggregator,
+or any custom base URL — instead of the default provider. Can also launch
+**Hermes Desktop**'s model setup.
+
+Model lists are fetched live from the gateway when possible, with curated
+fallbacks. Every config file is backed up before it's touched.
+
+## Requirements
+
+- Windows PowerShell 5.1+ or PowerShell 7+
+- `curl.exe` (bundled with Windows 10/11)
+- The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
+
+## Install
+
+1. Download or clone this folder anywhere on your machine:
+   ```powershell
+   git clone <your-repo-url>
+   cd "Custom AI Config"
+   ```
+   Or just download `AI-Config-Manager.ps1` and `AI-Config-Presets.json` into the
+   same folder.
+
+2. Run it:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
+   ```
+
+No install step, no dependencies. `AI-Config-Presets.json` must stay next to the
+script.
+
+## Usage
+
+Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
+
+| Option | What it does |
+|--------|--------------|
+| Configure Claude Code | Writes `~/.claude/settings.json` (base URL, token, model) |
+| Configure OpenCode | Writes `~/.config/opencode/opencode.json` (provider + model) |
+| Configure Codex | Writes `~/.codex/auth.json` + `~/.codex/config.toml`, sets an API-key env var |
+| Configure Hermes Desktop | Launches `hermes model` for you to complete manually |
+| Configure Both | Claude Code + OpenCode in one pass |
+| View current configuration | Shows what each tool is currently pointed at |
+
+Pick a gateway from the list, or choose **Custom base URL** to enter one at
+runtime. Then enter your API key and pick a model.
+
+## Gateways
+
+The gateway list comes from `AI-Config-Presets.json`. Add your own by copying a
+block — no code changes. Each preset defines, per tool, a base URL, provider
+labels, and a curated model fallback list.
+
+```json
+{
+  "presets": [
+    {
+      "id": "mygateway",
+      "label": "My Gateway",
+      "dashboard": "https://example.com/keys",
+      "fetchModels": true,
+      "modelsApiUrl": null,
+      "claude":   { "baseUrl": "https://example.com", "curatedModels": ["claude-opus-4-8"] },
+      "opencode": { "baseUrl": "https://example.com/v1", "providerKey": "mygateway", "providerName": "My Gateway", "npmPackage": "@ai-sdk/openai-compatible", "curatedModels": ["gpt-5.5"] },
+      "codex":    { "baseUrl": "https://example.com" }
+    }
+  ]
+}
+```
+
+Field notes:
+
+- `dashboard` — signup/key page shown at the API-key prompt (`null` to omit).
+- `fetchModels` — try a live model list before falling back to `curatedModels`.
+- `modelsApiUrl` — optional public model-list endpoint; if set, it's used instead
+  of the standard `/v1/models` call.
+- Base URLs can differ per tool — set each to whatever your gateway expects.
+
+## Notes
+
+- **Backups:** each write leaves a `*.backup-<timestamp>` copy next to the original.
+- **Codex sets an environment variable.** Configuring Codex writes a persistent
+  **User** environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
+  because Codex resolves its provider key from the real process environment.
+  Fully restart the Codex app afterward for it to take effect.
+- **Secrets:** API keys are written into these config files and, for Codex, into
+  a user environment variable — plaintext, local only. They're excluded from git
+  via `.gitignore`.
+
+## Development
+
+Run the built-in self-test for the scroll-window math (no terminal needed):
+
+```powershell
+powershell -File .\AI-Config-Manager.ps1 -SelfTest
+```
+
+## License
+
+No license specified.

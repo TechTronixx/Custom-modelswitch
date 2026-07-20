@@ -1,0 +1,45 @@
+{
+  "presets": [
+    {
+      "id": "euromodels",
+      "label": "EuroModels",
+      "dashboard": null,
+      "fetchModels": true,
+      "claude": {
+        "baseUrl": "https://euromodels.xyz",
+        "curatedModels": []
+      },
+      "opencode": {
+        "baseUrl": "https://euromodels.xyz",
+        "providerKey": "euromodels",
+        "providerName": "EuroModels",
+        "npmPackage": "@ai-sdk/openai-compatible",
+        "curatedModels": []
+      },
+      "codex": {
+        "baseUrl": "https://euromodels.xyz/v1"
+      }
+    },
+    {
+      "id": "agentrouter",
+      "label": "AgentRouter",
+      "dashboard": "https://agentrouter.org/register",
+      "fetchModels": true,
+      "modelsApiUrl": "https://agentrouter.org/api/pricing",
+      "claude": {
+        "baseUrl": "https://agentrouter.org",
+        "curatedModels": ["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"]
+      },
+      "opencode": {
+        "baseUrl": "https://agentrouter.org/v1",
+        "providerKey": "agentrouter",
+        "providerName": "AgentRouter",
+        "npmPackage": "@ai-sdk/openai-compatible",
+        "curatedModels": ["gpt-5.5", "glm-5.2"]
+      },
+      "codex": {
+        "baseUrl": "https://agentrouter.org"
+      }
+    }
+  ]
+}

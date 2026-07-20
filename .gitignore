@@ -1,0 +1,12 @@
+# Backups written by the config writers
+*.backup-*
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Local, user-specific preset overrides (optional convention)
+AI-Config-Presets.local.json
