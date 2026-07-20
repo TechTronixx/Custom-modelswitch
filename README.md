@@ -109,6 +109,15 @@ Run the built-in self-test for the scroll-window math (no terminal needed):
 powershell -File .\AI-Config-Manager.ps1 -SelfTest
 ```
 
+## 🤝 Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the branch
+workflow (`dev` → PR → `main`) and guidelines.
+
+Found a bug or want a new gateway/tool? [Open an issue](https://github.com/TechTronixx/Custom-modelswitch/issues) —
+issue templates are provided for bug reports and feature requests. Questions and
+ideas can go in [Discussions](https://github.com/TechTronixx/Custom-modelswitch/discussions).
+
 ## 📄 License
 
 No license specified.
