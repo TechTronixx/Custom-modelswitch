@@ -1,5 +1,11 @@
 # AI Config Manager
 
+![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-012456?logo=powershell&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
+![Issues](https://img.shields.io/github/issues/TechTronixx/Custom-modelswitch)
+![Stars](https://img.shields.io/github/stars/TechTronixx/Custom-modelswitch)
+![Last commit](https://img.shields.io/github/last-commit/TechTronixx/Custom-modelswitch)
+
 Terminal UI to point your AI coding tools at a custom gateway.
 
 Configures **Claude Code**, **OpenCode**, and **Codex** to use any
@@ -10,7 +16,7 @@ or any custom base URL — instead of the default provider. Can also launch
 Model lists are fetched live from the gateway when possible, with curated
 fallbacks. Every config file is backed up before it's touched.
 
-## Quick start
+## 🚀 Quick start
 
 ```powershell
 irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
@@ -19,13 +25,13 @@ irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootst
 Downloads to `~/AI-Config-Manager` and launches the menu. Re-run the same line
 any time to update and start again.
 
-## Requirements
+## ✅ Requirements
 
 - Windows PowerShell 5.1+ or PowerShell 7+
 - `curl.exe` (bundled with Windows 10/11)
 - The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
 
-## Install (manual)
+## 📦 Install (manual)
 
 Clone and run, if you prefer not to use the one-liner above:
 
@@ -37,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
 
 No dependencies. `AI-Config-Presets.json` must stay next to the script.
 
-## Usage
+## 🖥️ Usage
 
 Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 
@@ -53,7 +59,7 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 Pick a gateway from the list, or choose **Custom base URL** to enter one at
 runtime. Then enter your API key and pick a model.
 
-## Gateways
+## 🔌 Gateways
 
 The gateway list comes from `AI-Config-Presets.json`. Add your own by copying a
 block — no code changes. Each preset defines, per tool, a base URL, provider
@@ -84,7 +90,7 @@ Field notes:
   of the standard `/v1/models` call.
 - Base URLs can differ per tool — set each to whatever your gateway expects.
 
-## Notes
+## 📝 Notes
 
 - **Backups:** each write leaves a `*.backup-<timestamp>` copy next to the original.
 - **Codex sets an environment variable.** Configuring Codex writes a persistent
@@ -95,7 +101,7 @@ Field notes:
   a user environment variable — plaintext, local only. They're excluded from git
   via `.gitignore`.
 
-## Development
+## 🛠️ Development
 
 Run the built-in self-test for the scroll-window math (no terminal needed):
 
@@ -103,6 +109,6 @@ Run the built-in self-test for the scroll-window math (no terminal needed):
 powershell -File .\AI-Config-Manager.ps1 -SelfTest
 ```
 
-## License
+## 📄 License
 
 No license specified.
