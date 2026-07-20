@@ -10,21 +10,24 @@ or any custom base URL — instead of the default provider. Can also launch
 Model lists are fetched live from the gateway when possible, with curated
 fallbacks. Every config file is backed up before it's touched.
 
+## Quick start
+
+```powershell
+irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
+```
+
+Downloads to `~/AI-Config-Manager` and launches the menu. Re-run the same line
+any time to update and start again.
+
 ## Requirements
 
 - Windows PowerShell 5.1+ or PowerShell 7+
 - `curl.exe` (bundled with Windows 10/11)
 - The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
 
-## Install
+## Install (manual)
 
-**One-click** (downloads to `~/AI-Config-Manager` and launches):
-
-```powershell
-irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
-```
-
-Or clone and run manually:
+Clone and run, if you prefer not to use the one-liner above:
 
 ```powershell
 git clone https://github.com/TechTronixx/Custom-modelswitch.git
