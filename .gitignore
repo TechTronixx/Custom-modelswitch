@@ -10,3 +10,6 @@ Thumbs.db
 
 # Local, user-specific preset overrides (optional convention)
 AI-Config-Presets.local.json
+
+# Claude Code memory (local only, not for the repo)
+CLAUDE.md
