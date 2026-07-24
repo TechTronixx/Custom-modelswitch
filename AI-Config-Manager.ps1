@@ -239,7 +239,10 @@ function Set-Prop($Object, [string]$Name, $Value) {
 
 function Save-Json($Object, [string]$Path) {
     Ensure-Parent $Path
-    $Object | ConvertTo-Json -Depth 100 | Set-Content -Path $Path -Encoding UTF8
+    # BOM-less UTF-8 is required: the Claude Desktop app's JSON.parse rejects files
+    # that start with a BOM (PowerShell 5.1's Set-Content -Encoding UTF8 adds one).
+    $json = $Object | ConvertTo-Json -Depth 100
+    [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
 function Invoke-HermesModelSetup {
@@ -272,6 +275,42 @@ function Configure-Claude([string]$BaseUrl, [string]$ApiKey, [string]$Model) {
 
     Save-Json $cfg $path
     return @{ Path=$path; Backup=$backup }
+}
+
+# The Claude Desktop Electron app runs in "3P" mode and reads its gateway
+# settings from a managed config file in the configLibrary: the active entry is
+# the JSON file named by configLibrary/_meta.json -> appliedId. Its schema:
+#   inferenceProvider            = "gateway"
+#   inferenceGatewayBaseUrl      = <base URL>
+#   inferenceGatewayApiKey       = <api key>
+#   inferenceGatewayAuthScheme   = "x-api-key" | "bearer" | "sso"
+#   inferenceModels              = [ "model-id", ... ]
+# We rewrite that entry (backed up first). The app picks it up on next launch.
+function Configure-ClaudeDesktop([string]$BaseUrl, [string]$ApiKey, [string]$Model, [string]$AuthScheme) {
+    $dir = Join-Path $env:LOCALAPPDATA "Claude-3p"
+    $libraryDir = Join-Path $dir "configLibrary"
+    $metaPath = Join-Path $libraryDir "_meta.json"
+    if (!(Test-Path $metaPath)) {
+        throw "Claude Desktop configLibrary not found at $metaPath. Install and launch the Claude Desktop app once so it initializes its config."
+    }
+    $meta = Load-JsonObject $metaPath
+    $appliedId = [string]$meta.appliedId
+    if ([string]::IsNullOrWhiteSpace($appliedId)) {
+        throw "No appliedId in $metaPath. Open the Claude Desktop app once so it writes its active config entry."
+    }
+    $cfgPath = Join-Path $libraryDir "$appliedId.json"
+    $backup = Backup-File $cfgPath
+    $cfg = Load-JsonObject $cfgPath
+
+    $scheme = if ($AuthScheme) { $AuthScheme } else { "x-api-key" }
+    Set-Prop $cfg "inferenceProvider" "gateway"
+    Set-Prop $cfg "inferenceGatewayBaseUrl" (Normalize-BaseUrl $BaseUrl)
+    Set-Prop $cfg "inferenceGatewayApiKey" $ApiKey
+    Set-Prop $cfg "inferenceGatewayAuthScheme" $scheme
+    Set-Prop $cfg "inferenceModels" @($Model)
+
+    Save-Json $cfg $cfgPath
+    return @{ Path=$cfgPath; Backup=$backup }
 }
 
 function Configure-OpenCode([string]$BaseUrl, [string]$ApiKey, [string]$Model, [string]$ProviderKey, [string]$ProviderName, [string]$NpmPackage) {
@@ -552,6 +591,31 @@ function Show-Current {
         if ($value) { Write-Host "    $name=$(if ($name -match 'KEY|TOKEN') { Mask-Key $value } else { $value })" }
     }
 
+    Write-Host ""
+    Write-Host "  Claude Desktop: 3P gateway config" -ForegroundColor Gray
+    $cdDir = Join-Path $env:LOCALAPPDATA "Claude-3p"
+    $cdMeta = Join-Path $cdDir "configLibrary\_meta.json"
+    if (Test-Path $cdMeta) {
+        try {
+            $cdM = Get-Content $cdMeta -Raw | ConvertFrom-Json
+            $cdId = [string]$cdM.appliedId
+            $cdCfgPath = Join-Path $cdDir "configLibrary\$cdId.json"
+            if ($cdId -and (Test-Path $cdCfgPath)) {
+                $cdCfg = Get-Content $cdCfgPath -Raw | ConvertFrom-Json
+                Write-Host "    Config: $cdCfgPath"
+                Write-Host "    Base URL:    $($cdCfg.inferenceGatewayBaseUrl)"
+                Write-Host "    Auth scheme: $($cdCfg.inferenceGatewayAuthScheme)"
+                Write-Host "    API Key:     $(Mask-Key ([string]$cdCfg.inferenceGatewayApiKey))"
+                $models = @($cdCfg.inferenceModels | Where-Object { $_ })
+                if ($models.Count -gt 0) { Write-Host "    Models:      $($models -join ', ')" }
+            } else {
+                Write-Host "    No active config entry (appliedId missing or file absent)." -ForegroundColor DarkGray
+            }
+        } catch { Write-Host "    Could not parse Claude Desktop config." -ForegroundColor Yellow }
+    } else {
+        Write-Host "    No configLibrary found (Claude Desktop not installed or not launched)." -ForegroundColor DarkGray
+    }
+
     $op = Join-Path $HOME ".config\opencode\opencode.json"
     Write-Host "  OpenCode: $op" -ForegroundColor Gray
     if (Test-Path $op) {
@@ -650,17 +714,19 @@ while ($true) {
         "Configure OpenCode",
         "Configure Codex",
         "Configure Hermes Desktop",
+        "Configure Claude Desktop",
         "Configure Both (Claude Code + OpenCode)",
         "View current configuration",
         "Exit"
     )
-    if ($targetIdx -eq -1 -or $targetIdx -eq 6) { break }
-    if ($targetIdx -eq 5) { Show-Current; continue }
+    if ($targetIdx -eq -1 -or $targetIdx -eq 7) { break }
+    if ($targetIdx -eq 6) { Show-Current; continue }
     if ($targetIdx -eq 3) { Invoke-HermesModelSetup; continue }
 
-    $doClaude = $targetIdx -in 0,4
-    $doOpenCode = $targetIdx -in 1,4
+    $doClaude = $targetIdx -in 0,5
+    $doOpenCode = $targetIdx -in 1,5
     $doCodex = $targetIdx -eq 2
+    $doClaudeDesktop = $targetIdx -eq 4
 
     $gwOpts = @($presets | ForEach-Object { $_.label }) + "[ Custom base URL ]"
     $gwIdx = Show-Menu -Title "Select Gateway" -Options $gwOpts
@@ -733,11 +799,18 @@ while ($true) {
         $claudeModel = $null
         $opencodeModel = $null
         $codexModel = $null
+        $claudeDesktopModel = $null
 
-        if ($doClaude) {
+        if ($doClaude -or $doClaudeDesktop) {
             $cm = Merge-Models $liveClaude $preset.claude.curatedModels
-            $claudeModel = Choose-Model $cm $canRefresh $preset.label "Claude Code" $preset $apiKey "claude"
-            if (!$claudeModel) { break }
+            if ($doClaude) {
+                $claudeModel = Choose-Model $cm $canRefresh $preset.label "Claude Code" $preset $apiKey "claude"
+                if (!$claudeModel) { break }
+            }
+            if ($doClaudeDesktop) {
+                $claudeDesktopModel = Choose-Model $cm $canRefresh $preset.label "Claude Desktop" $preset $apiKey "claude"
+                if (!$claudeDesktopModel) { break }
+            }
         }
         if ($doOpenCode -or $doCodex) {
             $om = Merge-Models $liveOpenCode $preset.opencode.curatedModels
@@ -752,12 +825,13 @@ while ($true) {
         }
 
         $summary = @()
-        $targetName = if ($doClaude -and $doOpenCode) { 'Claude Code + OpenCode' } elseif ($doClaude) { 'Claude Code' } elseif ($doCodex) { 'Codex' } else { 'OpenCode' }
+        $targetName = if ($doClaude -and $doOpenCode) { 'Claude Code + OpenCode' } elseif ($doClaude) { 'Claude Code' } elseif ($doClaudeDesktop) { 'Claude Desktop' } elseif ($doCodex) { 'Codex' } else { 'OpenCode' }
         $summary += "Target:  $targetName"
         $summary += "Gateway: $($preset.label)"
-        if ($doClaude)    { $summary += "Claude model:    $claudeModel" }
-        if ($doOpenCode)  { $summary += "OpenCode model:  $opencodeModel" }
-        if ($doCodex)     { $summary += "Codex model:     $codexModel" }
+        if ($doClaude)          { $summary += "Claude model:        $claudeModel" }
+        if ($doClaudeDesktop)   { $summary += "Claude Desktop model:$claudeDesktopModel" }
+        if ($doOpenCode)        { $summary += "OpenCode model:      $opencodeModel" }
+        if ($doCodex)           { $summary += "Codex model:         $codexModel" }
         $summary += "API Key: $(Mask-Key $apiKey)"
 
         $cIdx = Show-Menu -Title "Confirm" -Options @(
@@ -776,6 +850,20 @@ while ($true) {
                 Write-Host "[OK] Claude Code configured" -ForegroundColor Green
                 Write-Host "     $($r.Path)"
                 if ($r.Backup) { Write-Host "     Backup: $($r.Backup)" -ForegroundColor DarkGray }
+            }
+            if ($doClaudeDesktop) {
+                $r = Configure-ClaudeDesktop $preset.claude.baseUrl $apiKey $claudeDesktopModel
+                Write-Host "[OK] Claude Desktop configured (3P gateway config)" -ForegroundColor Green
+                Write-Host "     $($r.Path)"
+                if ($r.Backup) { Write-Host "     Backup: $($r.Backup)" -ForegroundColor DarkGray }
+                Write-Host ""
+                Write-Host "  Next steps in the Claude Desktop app:" -ForegroundColor Cyan
+                Write-Host "  1. Fully quit and reopen the app (tray icon > Quit, not just close window)" -ForegroundColor Gray
+                Write-Host "  2. If a setup/login screen appears, open the app menu (top-left) > Developer >" -ForegroundColor Gray
+                Write-Host "     Configure Third-Party Inference to verify the gateway config loaded" -ForegroundColor Gray
+                Write-Host "  3. The gateway base URL, API key, and model are pre-configured by this script" -ForegroundColor Gray
+                Write-Host "  4. If the model list looks wrong, the model IDs must match what your gateway" -ForegroundColor Gray
+                Write-Host "     expects (each gateway uses its own model ID format)" -ForegroundColor Gray
             }
             if ($doOpenCode) {
                 $r = Configure-OpenCode $preset.opencode.baseUrl $apiKey $opencodeModel $preset.opencode.providerKey $preset.opencode.providerName $preset.opencode.npmPackage

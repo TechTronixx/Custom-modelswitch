@@ -53,6 +53,7 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 | Configure OpenCode | Writes `~/.config/opencode/opencode.json` (provider + model) |
 | Configure Codex | Writes `~/.codex/auth.json` + `~/.codex/config.toml`, sets an API-key env var |
 | Configure Hermes Desktop | Launches `hermes model` for you to complete manually |
+| Configure Claude Desktop | Writes the 3P gateway config (configLibrary entry) for the Claude Desktop app |
 | Configure Both | Claude Code + OpenCode in one pass |
 | View current configuration | Shows what each tool is currently pointed at |
 
@@ -97,6 +98,14 @@ Field notes:
   **User** environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
   because Codex resolves its provider key from the real process environment.
   Fully restart the Codex app afterward for it to take effect.
+- **Claude Desktop uses a 3P gateway config.** The Claude Desktop Electron app
+  stores its gateway settings in a managed config file inside
+  `%LOCALAPPDATA%\Claude-3p\configLibrary\`. The script finds the active entry
+  (via `_meta.json`'s `appliedId`) and writes the gateway base URL, API key, auth
+  scheme, and model list. Fully restart the app afterward. If a setup screen
+  appears, go to Menu > Developer > Configure Third-Party Inference to verify the
+  config loaded. Each gateway uses its own model ID format, so pick the model
+  from the live-fetched list that matches your gateway.
 - **Secrets:** API keys are written into these config files and, for Codex, into
   a user environment variable — plaintext, local only. They're excluded from git
   via `.gitignore`.
