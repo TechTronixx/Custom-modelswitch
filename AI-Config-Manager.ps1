@@ -444,6 +444,7 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
     # it discard the whole file and silently fall back to ChatGPT defaults. So a
     # built-in provider ID (openai) or a stale wire_api value breaks everything.
     $provider = if ($ProviderKey -and $ProviderKey -ne "openai") { $ProviderKey } else { "custom" }
+    $providerName = if ($ProviderName) { $ProviderName } else { $provider }
     $envKey = ($provider.ToUpper() -replace '[^A-Z0-9]', '_') + "_API_KEY"
 
     $toml = if (Test-Path $configPath) { Get-Content $configPath -Raw } else { "" }
@@ -472,6 +473,7 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
     # Keep the key in [shell_environment_policy.set] too, so shells Codex spawns
     # for tools inherit it.
     $toml = Set-TomlEnvPolicyValue $toml $envKey $ApiKey
+    $toml = [regex]::Replace($toml, '(?m)^\s*name\s*=\s*""\s*$', 'name = "custom"')
     Ensure-Parent $configPath
     Set-Content -Path $configPath -Value $toml -Encoding UTF8
 
@@ -484,6 +486,66 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
     return @(
         @{ Path=$authPath; Backup=$authBackup }
         @{ Path=$configPath; Backup=$configBackup }
+    )
+}
+
+function Configure-Cline {
+    param(
+        [Parameter(Mandatory)][string]$BaseUrl,
+        [Parameter(Mandatory)][string]$ApiKey,
+        [Parameter(Mandatory)][string]$Model,
+        [string]$ProviderName = "Custom"
+    )
+
+    $dir = Join-Path $env:USERPROFILE ".cline\data"
+    if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+    $secretsPath = Join-Path $dir "secrets.json"
+    $globalPath = Join-Path $dir "globalState.json"
+
+    $secretsBackup = Backup-File $secretsPath
+    $globalBackup  = Backup-File $globalPath
+
+    $anthropicUrl = $BaseUrl.TrimEnd("/")
+    if ($anthropicUrl.EndsWith("/v1")) { $anthropicUrl = $anthropicUrl.Substring(0, $anthropicUrl.Length - 3) }
+
+    $openaiUrl = $BaseUrl.TrimEnd("/")
+    if (!$openaiUrl.EndsWith("/v1")) { $openaiUrl += "/v1" }
+
+    $secrets = @{}
+    if (Test-Path $secretsPath) {
+        try {
+            $json = Get-Content $secretsPath -Raw | ConvertFrom-Json
+            $json.psobject.properties | ForEach-Object { $secrets[$_.Name] = $_.Value }
+        } catch {}
+    }
+    $secrets["apiKey"] = $ApiKey
+    $secrets["openAiApiKey"] = $ApiKey
+    $secrets["anthropicApiKey"] = $ApiKey
+    Set-Content -Path $secretsPath -Value ($secrets | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    $state = @{}
+    if (Test-Path $globalPath) {
+        try {
+            $json = Get-Content $globalPath -Raw | ConvertFrom-Json
+            $json.psobject.properties | ForEach-Object { $state[$_.Name] = $_.Value }
+        } catch {}
+    }
+    $state["apiProvider"] = "openai-compatible"
+    $state["planModeApiProvider"] = "openai-compatible"
+    $state["actModeApiProvider"] = "openai-compatible"
+    $state["openAiBaseUrl"] = $openaiUrl
+    $state["anthropicBaseUrl"] = $anthropicUrl
+    $state["planModeOpenAiModelId"] = $Model
+    $state["actModeOpenAiModelId"] = $Model
+    $state["planModeApiModelId"] = $Model
+    $state["actModeApiModelId"] = $Model
+    $state["openAiModelId"] = $Model
+    Set-Content -Path $globalPath -Value ($state | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    return @(
+        @{ Path=$secretsPath; Backup=$secretsBackup }
+        @{ Path=$globalPath; Backup=$globalBackup }
     )
 }
 
@@ -671,6 +733,30 @@ function Show-Current {
     if ($hermesCandidates.Count -gt 0) {
         Write-Host "    Hermes config: $($hermesCandidates -join ', ')" -ForegroundColor DarkGray
     }
+    $clineDir = Join-Path $env:USERPROFILE ".cline\data"
+    $clineGlobal = Join-Path $clineDir "globalState.json"
+    $clineSecrets = Join-Path $clineDir "secrets.json"
+    Write-Host ""
+    Write-Host "  Cline: $clineDir" -ForegroundColor DarkGray
+    if (Test-Path $clineGlobal) {
+        try {
+            $st = Get-Content $clineGlobal -Raw | ConvertFrom-Json
+            $sec = if (Test-Path $clineSecrets) { Get-Content $clineSecrets -Raw | ConvertFrom-Json } else { $null }
+            $prov = $st.apiProvider
+            $bUrl = if ($st.openAiBaseUrl) { $st.openAiBaseUrl } else { $st.anthropicBaseUrl }
+            $model = if ($st.actModeOpenAiModelId) { $st.actModeOpenAiModelId } else { $st.actModeApiModelId }
+            $key = if ($sec -and $sec.openAiApiKey) { $sec.openAiApiKey } elseif ($sec -and $sec.apiKey) { $sec.apiKey } else { "" }
+            Write-Host "    Provider: $prov"
+            Write-Host "    Base URL: $bUrl"
+            Write-Host "    Model:    $model"
+            Write-Host "    API Key:  $(Mask-Key $key)"
+        } catch {
+            Write-Host "    Could not parse Cline config." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "    No config found." -ForegroundColor DarkGray
+    }
+
     Pause-Screen
 }
 
@@ -699,7 +785,29 @@ function New-CustomPreset([string]$Url) {
     }
 }
 
-# ---------- main loop ----------
+function Load-DotEnv {
+    $paths = @(
+        (Join-Path $PSScriptRoot ".env"),
+        (Join-Path $PSScriptRoot ".env.local")
+    )
+    foreach ($path in $paths) {
+        if (Test-Path $path) {
+            Get-Content $path | ForEach-Object {
+                $line = $_.Trim()
+                if ($line -and !$line.StartsWith("#") -and $line.Contains("=")) {
+                    $parts = $line.Split("=", 2)
+                    $k = $parts[0].Trim()
+                    $v = $parts[1].Trim().Trim('"').Trim("'")
+                    if ($k -and $v) {
+                        [Environment]::SetEnvironmentVariable($k, $v, "Process")
+                    }
+                }
+            }
+        }
+    }
+}
+
+Load-DotEnv
 
 if ([Console]::IsInputRedirected) {
     Write-Host "This TUI requires an interactive terminal. Run it directly, not piped." -ForegroundColor Red
@@ -715,18 +823,20 @@ while ($true) {
         "Configure Codex",
         "Configure Hermes Desktop",
         "Configure Claude Desktop",
-        "Configure Both (Claude Code + OpenCode)",
+        "Configure Cline (VS Code / CLI)",
+        "Configure All (Claude Code + OpenCode + Codex + Cline)",
         "View current configuration",
         "Exit"
     )
-    if ($targetIdx -eq -1 -or $targetIdx -eq 7) { break }
-    if ($targetIdx -eq 6) { Show-Current; continue }
+    if ($targetIdx -eq -1 -or $targetIdx -eq 8) { break }
+    if ($targetIdx -eq 7) { Show-Current; continue }
     if ($targetIdx -eq 3) { Invoke-HermesModelSetup; continue }
 
-    $doClaude = $targetIdx -in 0,5
-    $doOpenCode = $targetIdx -in 1,5
-    $doCodex = $targetIdx -eq 2
+    $doClaude = $targetIdx -in 0,6
+    $doOpenCode = $targetIdx -in 1,6
+    $doCodex = $targetIdx -in 2,6
     $doClaudeDesktop = $targetIdx -eq 4
+    $doCline = $targetIdx -in 5,6
 
     $gwOpts = @($presets | ForEach-Object { $_.label }) + "[ Custom base URL ]"
     $gwIdx = Show-Menu -Title "Select Gateway" -Options $gwOpts
@@ -744,9 +854,9 @@ while ($true) {
 
     # Never pass the reserved built-in ID "openai" as a provider key — Codex
     # rejects the whole config if a custom provider reuses a built-in ID.
-    $codexProviderKey = if ($preset.id -eq "agentrouter") { "agentrouter" } elseif ($preset.id -eq "euromodels") { "euromodels" } else { $null }
-    $codexProviderName = if ($preset.id -eq "agentrouter") { "agentrouter" } elseif ($preset.id -eq "euromodels") { "euromodels" } else { $null }
-    if ($doCodex -and $preset.id -eq $null) {
+    $codexProviderKey = if ($preset.codex -and $preset.codex.providerKey) { $preset.codex.providerKey } elseif ($preset.id) { $preset.id } elseif ($preset.opencode -and $preset.opencode.providerKey) { $preset.opencode.providerKey } else { $null }
+    $codexProviderName = if ($preset.codex -and $preset.codex.providerName) { $preset.codex.providerName } elseif ($preset.label) { $preset.label } elseif ($preset.opencode -and $preset.opencode.providerName) { $preset.opencode.providerName } else { $null }
+    if ($doCodex -and [string]::IsNullOrWhiteSpace($codexProviderKey)) {
         while ([string]::IsNullOrWhiteSpace($codexProviderKey)) {
             $codexProviderKey = (Read-Host "Codex provider key (for [model_providers.<key>])").Trim()
         }
@@ -755,13 +865,25 @@ while ($true) {
         }
     }
 
+    $envVarName = if ($codexProviderKey) { ($codexProviderKey.ToUpper() -replace '[^A-Z0-9]', '_') + "_API_KEY" } else { "CUSTOM_API_KEY" }
+    $envDefaultKey = [Environment]::GetEnvironmentVariable($envVarName, "Process")
+    if ([string]::IsNullOrWhiteSpace($envDefaultKey)) { $envDefaultKey = $env:CUSTOM_API_KEY }
+
     Clear-Host
     Write-Banner "API Key - $($preset.label)"
     if ($preset.dashboard) {
         Write-Host "  Get a key at: $($preset.dashboard)" -ForegroundColor DarkGray
         Write-Host ""
     }
+    if ($envDefaultKey) {
+        Write-Host "  Found pre-saved key in .env / environment: $(Mask-Key $envDefaultKey)" -ForegroundColor Green
+        Write-Host "  (Press Enter to use pre-saved key, or type a new key below)" -ForegroundColor DarkGray
+        Write-Host ""
+    }
     $apiKey = Read-SecretPlain
+    if ([string]::IsNullOrWhiteSpace($apiKey) -and $envDefaultKey) {
+        $apiKey = $envDefaultKey
+    }
     if ([string]::IsNullOrWhiteSpace($apiKey)) {
         Write-Host "API key cannot be empty." -ForegroundColor Red
         Pause-Screen
@@ -800,6 +922,7 @@ while ($true) {
         $opencodeModel = $null
         $codexModel = $null
         $claudeDesktopModel = $null
+        $clineModel = $null
 
         if ($doClaude -or $doClaudeDesktop) {
             $cm = Merge-Models $liveClaude $preset.claude.curatedModels
@@ -812,7 +935,7 @@ while ($true) {
                 if (!$claudeDesktopModel) { break }
             }
         }
-        if ($doOpenCode -or $doCodex) {
+        if ($doOpenCode -or $doCodex -or $doCline) {
             $om = Merge-Models $liveOpenCode $preset.opencode.curatedModels
             if ($doOpenCode) {
                 $opencodeModel = Choose-Model $om $canRefresh $preset.label "OpenCode" $preset $apiKey "opencode"
@@ -822,16 +945,21 @@ while ($true) {
                 $codexModel = Choose-Model $om $canRefresh $preset.label "Codex" $preset $apiKey "opencode"
                 if (!$codexModel) { break }
             }
+            if ($doCline) {
+                $clineModel = Choose-Model $om $canRefresh $preset.label "Cline" $preset $apiKey "opencode"
+                if (!$clineModel) { break }
+            }
         }
 
         $summary = @()
-        $targetName = if ($doClaude -and $doOpenCode) { 'Claude Code + OpenCode' } elseif ($doClaude) { 'Claude Code' } elseif ($doClaudeDesktop) { 'Claude Desktop' } elseif ($doCodex) { 'Codex' } else { 'OpenCode' }
+        $targetName = if ($doClaude -and $doOpenCode -and $doCodex -and $doCline) { 'Claude Code + OpenCode + Codex + Cline' } elseif ($doClaude) { 'Claude Code' } elseif ($doClaudeDesktop) { 'Claude Desktop' } elseif ($doCodex) { 'Codex' } elseif ($doCline) { 'Cline' } else { 'OpenCode' }
         $summary += "Target:  $targetName"
         $summary += "Gateway: $($preset.label)"
         if ($doClaude)          { $summary += "Claude model:        $claudeModel" }
         if ($doClaudeDesktop)   { $summary += "Claude Desktop model:$claudeDesktopModel" }
         if ($doOpenCode)        { $summary += "OpenCode model:      $opencodeModel" }
         if ($doCodex)           { $summary += "Codex model:         $codexModel" }
+        if ($doCline)           { $summary += "Cline model:         $clineModel" }
         $summary += "API Key: $(Mask-Key $apiKey)"
 
         $cIdx = Show-Menu -Title "Confirm" -Options @(
@@ -856,28 +984,14 @@ while ($true) {
                 Write-Host "[OK] Claude Desktop configured (3P gateway config)" -ForegroundColor Green
                 Write-Host "     $($r.Path)"
                 if ($r.Backup) { Write-Host "     Backup: $($r.Backup)" -ForegroundColor DarkGray }
-                Write-Host ""
-                Write-Host "  Next steps in the Claude Desktop app:" -ForegroundColor Cyan
-                Write-Host "  1. Fully quit and reopen the app (tray icon > Quit, not just close window)" -ForegroundColor Gray
-                Write-Host "  2. If a setup/login screen appears, open the app menu (top-left) > Developer >" -ForegroundColor Gray
-                Write-Host "     Configure Third-Party Inference to verify the gateway config loaded" -ForegroundColor Gray
-                Write-Host "  3. The gateway base URL, API key, and model are pre-configured by this script" -ForegroundColor Gray
-                Write-Host "  4. If the model list looks wrong, the model IDs must match what your gateway" -ForegroundColor Gray
-                Write-Host "     expects (each gateway uses its own model ID format)" -ForegroundColor Gray
             }
             if ($doOpenCode) {
                 $r = Configure-OpenCode $preset.opencode.baseUrl $apiKey $opencodeModel $preset.opencode.providerKey $preset.opencode.providerName $preset.opencode.npmPackage
                 Write-Host "[OK] OpenCode configured" -ForegroundColor Green
                 Write-Host "     $($r.Path)"
                 if ($r.Backup) { Write-Host "     Backup: $($r.Backup)" -ForegroundColor DarkGray }
-                if ($preset.id -eq "agentrouter") {
-                    Write-Host "     If OpenCode rejects the key, run: opencode providers login --provider agentrouter" -ForegroundColor DarkGray
-                }
             }
             if ($doCodex) {
-                # Codex appends /responses to base_url, so AgentRouter needs the
-                # root host (not /v1). Presets provide codex.baseUrl for this;
-                # fall back to opencode.baseUrl for presets/custom without one.
                 $codexBaseUrl = if ($preset.codex -and $preset.codex.baseUrl) { $preset.codex.baseUrl } else { $preset.opencode.baseUrl }
                 $results = Configure-Codex $codexBaseUrl $apiKey $codexModel $codexProviderKey $codexProviderName
                 Write-Host "[OK] Codex configured" -ForegroundColor Green
@@ -886,9 +1000,17 @@ while ($true) {
                     if ($item.Backup) { Write-Host "     Backup: $($item.Backup)" -ForegroundColor DarkGray }
                 }
             }
+            if ($doCline) {
+                $results = Configure-Cline $preset.opencode.baseUrl $apiKey $clineModel $preset.opencode.providerName
+                Write-Host "[OK] Cline configured" -ForegroundColor Green
+                foreach ($item in $results) {
+                    Write-Host "     $($item.Path)"
+                    if ($item.Backup) { Write-Host "     Backup: $($item.Backup)" -ForegroundColor DarkGray }
+                }
+            }
             Write-Host ""
             Write-Host "Configuration complete." -ForegroundColor Green
-            Write-Host "Close existing Claude Code, OpenCode, or Codex sessions and start a new terminal session."
+            Write-Host "Close existing sessions and start a new session."
         } catch {
             Write-Host ""
             Write-Host "Configuration failed:" -ForegroundColor Red

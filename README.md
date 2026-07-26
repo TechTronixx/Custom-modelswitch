@@ -1,47 +1,72 @@
 # AI Config Manager
 
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078D6?logo=apple&logoColor=white)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-012456?logo=powershell&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
-![Issues](https://img.shields.io/github/issues/TechTronixx/Custom-modelswitch)
-![Stars](https://img.shields.io/github/stars/TechTronixx/Custom-modelswitch)
-![Last commit](https://img.shields.io/github/last-commit/TechTronixx/Custom-modelswitch)
+![Bash](https://img.shields.io/badge/Bash-3.2%2B-4EAA25?logo=gnu-bash&logoColor=white)
+![Issues](https://img.shields.io/github/issues/hmshohrab/Custom-modelswitch)
+![Stars](https://img.shields.io/github/stars/hmshohrab/Custom-modelswitch)
+![Last commit](https://img.shields.io/github/last-commit/hmshohrab/Custom-modelswitch)
 
-Terminal UI to point your AI coding tools at a custom gateway.
+![Claude Code](https://img.shields.io/badge/Claude%20Code-3A3A3A?logo=anthropic&logoColor=white)
+![OpenCode](https://img.shields.io/badge/OpenCode-0057B8)
+![Codex](https://img.shields.io/badge/Codex-412991?logo=openai&logoColor=white)
+![Cline](https://img.shields.io/badge/Cline-5C2D91?logo=visualstudiocode&logoColor=white)
+![Hermes Desktop](https://img.shields.io/badge/Hermes%20Desktop-FF6B6B)
 
-Configures **Claude Code**, **OpenCode**, and **Codex** to use any
-OpenAI/Anthropic-compatible endpoint — a self-hosted proxy, a model aggregator,
-or any custom base URL — instead of the default provider. Can also launch
-**Hermes Desktop**'s model setup.
+One-liner to switch Claude Code, OpenCode, Codex, Cline, and Hermes Desktop to a custom AI gateway. Supports **Windows** (PowerShell) and **macOS** (Bash).
 
 Model lists are fetched live from the gateway when possible, with curated
 fallbacks. Every config file is backed up before it's touched.
 
 ## Quick start
 
-```powershell
-irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
+### macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hmshohrab/Custom-modelswitch/main/bootstrap.sh | bash
 ```
 
-Downloads to `~/AI-Config-Manager` and launches the menu. Re-run the same line
-any time to update and start again.
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/hmshohrab/Custom-modelswitch/main/bootstrap.ps1 | iex
+```
+
+Downloads to `~/AI-Config-Manager` and launches the interactive menu. Re-run the one-liner any time to update and start again.
 
 ## Requirements
 
+### macOS
+- macOS (Intel or Apple Silicon)
+- Bash 3.2+ (built-in standard shell)
+- `curl` and `python3` (built-in standard tools)
+
+### Windows
 - Windows PowerShell 5.1+ or PowerShell 7+
 - `curl.exe` (bundled with Windows 10/11)
-- The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
 
 ## Install (manual)
 
 Clone and run, if you prefer not to use the one-liner above:
 
+### macOS
+
+```bash
+git clone https://github.com/hmshohrab/Custom-modelswitch.git
+cd Custom-modelswitch
+chmod +x AI-Config-Manager.sh
+./AI-Config-Manager.sh
+```
+
+### Windows
+
 ```powershell
-git clone https://github.com/TechTronixx/Custom-modelswitch.git
+git clone https://github.com/hmshohrab/Custom-modelswitch.git
 cd Custom-modelswitch
 powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
 ```
 
-No dependencies. `AI-Config-Presets.json` must stay next to the script.
+No heavy external dependencies. `AI-Config-Presets.json` must stay next to the script.
 
 ## Usage
 
@@ -54,7 +79,8 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 | Configure Codex | Writes `~/.codex/auth.json` + `~/.codex/config.toml`, sets an API-key env var |
 | Configure Hermes Desktop | Launches `hermes model` for you to complete manually |
 | Configure Claude Desktop | Writes the 3P gateway config (configLibrary entry) for the Claude Desktop app |
-| Configure Both | Claude Code + OpenCode in one pass |
+| Configure Cline | Writes `~/.cline/data/globalState.json` + `secrets.json` for VS Code / CLI Cline extension |
+| Configure All | Claude Code + OpenCode + Codex + Cline in one pass |
 | View current configuration | Shows what each tool is currently pointed at |
 
 Pick a gateway from the list, or choose **Custom base URL** to enter one at
@@ -95,24 +121,34 @@ Field notes:
 
 - **Backups:** each write leaves a `*.backup-<timestamp>` copy next to the original.
 - **Codex sets an environment variable.** Configuring Codex writes a persistent
-  **User** environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
+  environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
   because Codex resolves its provider key from the real process environment.
+  On Windows, it sets a User environment variable; on macOS, it appends an `export`
+  statement to `~/.zshrc` or `~/.zprofile` without creating duplicate entries.
   Fully restart the Codex app afterward for it to take effect.
 - **Claude Desktop uses a 3P gateway config.** The Claude Desktop Electron app
   stores its gateway settings in a managed config file inside
-  `%LOCALAPPDATA%\Claude-3p\configLibrary\`. The script finds the active entry
+  `%LOCALAPPDATA%\Claude-3p\configLibrary\` (Windows) or `~/Library/Application Support/Claude-3p/configLibrary/` (macOS). The script finds the active entry
   (via `_meta.json`'s `appliedId`) and writes the gateway base URL, API key, auth
   scheme, and model list. Fully restart the app afterward. If a setup screen
   appears, go to Menu > Developer > Configure Third-Party Inference to verify the
   config loaded. Each gateway uses its own model ID format, so pick the model
   from the live-fetched list that matches your gateway.
 - **Secrets:** API keys are written into these config files and, for Codex, into
-  a user environment variable — plaintext, local only. They're excluded from git
+  an environment variable — plaintext, local only. They're excluded from git
   via `.gitignore`.
 
 ## Development
 
 Run the built-in self-test for the scroll-window math (no terminal needed):
+
+### macOS
+
+```bash
+./AI-Config-Manager.sh -SelfTest
+```
+
+### Windows
 
 ```powershell
 powershell -File .\AI-Config-Manager.ps1 -SelfTest
