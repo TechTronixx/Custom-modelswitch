@@ -1,7 +1,7 @@
 # AI Config Manager
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-012456?logo=powershell&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6?logo=linux&logoColor=white)
 ![Issues](https://img.shields.io/github/issues/TechTronixx/Custom-modelswitch)
 ![Stars](https://img.shields.io/github/stars/TechTronixx/Custom-modelswitch)
 ![Last commit](https://img.shields.io/github/last-commit/TechTronixx/Custom-modelswitch)
@@ -11,12 +11,22 @@
 ![Codex](https://img.shields.io/badge/Codex-412991?logo=openai&logoColor=white)
 ![Hermes Desktop](https://img.shields.io/badge/Hermes%20Desktop-FF6B6B)
 
-One-liner to switch Claude Code, OpenCode, Codex, and Hermes Desktop to a custom AI gateway.
+One-liner to switch Claude Code, Claude Desktop, OpenCode, Codex, and Hermes Desktop to a custom AI gateway.
 
 Model lists are fetched live from the gateway when possible, with curated
 fallbacks. Every config file is backed up before it's touched.
 
 ## Quick start
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/install.sh | bash
+```
+
+Installs PowerShell 7 if it is missing, downloads the script to `~/AI-Config-Manager`, and launches the menu.
+
+### Windows
 
 ```powershell
 irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
@@ -27,18 +37,29 @@ any time to update and start again.
 
 ## Requirements
 
-- Windows PowerShell 5.1+ or PowerShell 7+
-- `curl.exe` (bundled with Windows 10/11)
-- The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
+- Windows: Windows PowerShell 5.1+ or PowerShell 7+
+- macOS / Linux: PowerShell 7+ (installed automatically by the bash one-liner if missing)
+- `curl` / `curl.exe`
+- The tools you want to configure (Claude Code, Claude Desktop, OpenCode, Codex, Hermes)
 
 ## Install (manual)
 
 Clone and run, if you prefer not to use the one-liner above:
 
+**Windows**
+
 ```powershell
 git clone https://github.com/TechTronixx/Custom-modelswitch.git
 cd Custom-modelswitch
 powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
+```
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/TechTronixx/Custom-modelswitch.git
+cd Custom-modelswitch
+pwsh -ExecutionPolicy Bypass -File ./AI-Config-Manager.ps1
 ```
 
 No dependencies. `AI-Config-Presets.json` must stay next to the script.
@@ -94,10 +115,11 @@ Field notes:
 ## Notes
 
 - **Backups:** each write leaves a `*.backup-<timestamp>` copy next to the original.
-- **Codex sets an environment variable.** Configuring Codex writes a persistent
-  **User** environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
-  because Codex resolves its provider key from the real process environment.
-  Fully restart the Codex app afterward for it to take effect.
+- **Codex sets an environment variable.** Configuring Codex writes your API key
+  where Codex can find it: a persistent **User** environment variable on Windows,
+  or an `export KEY=...` line in the shell config you choose on macOS/Linux. Codex
+  resolves its provider key from the real process environment. Fully restart the
+  Codex app afterward for it to take effect.
 - **Claude Desktop uses a 3P gateway config.** The Claude Desktop Electron app
   stores its gateway settings in a managed config file inside
   `%LOCALAPPDATA%\Claude-3p\configLibrary\`. The script finds the active entry
@@ -116,6 +138,7 @@ Run the built-in self-test for the scroll-window math (no terminal needed):
 
 ```powershell
 powershell -File .\AI-Config-Manager.ps1 -SelfTest
+pwsh -File ./AI-Config-Manager.ps1 -SelfTest
 ```
 
 ## Contributing

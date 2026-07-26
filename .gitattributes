@@ -1,0 +1,2 @@
+# Keep shell scripts as LF so they run after being cloned on any OS.
+*.sh text eol=lf

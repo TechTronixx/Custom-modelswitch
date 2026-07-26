@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.0
+
+- New: Linux and macOS support via a `curl -fsSL .../install.sh | bash` one-liner.
+- New: `install.sh` auto-installs PowerShell 7 on Linux and macOS if `pwsh` is missing.
+- New: Unix shell-rc persistence for Codex provider keys (pick `~/.bashrc`, `~/.zshrc`, or `~/.profile`).
+- Fix: cross-platform `curl` resolution (`curl` on Unix, `curl.exe` on Windows).
+- Fix: forward-slash paths in `Join-Path` for Unix compatibility.
+- Fix: Claude Desktop config directory resolver for Windows, macOS, and Linux.
+- Fix: safe `$IsWindows`/`$IsLinux`/`$IsMacOS` detection that works on Windows PowerShell 5.1.
+
 ## v1.1.0
 
 - New: Configure Claude Desktop app support via the 3P gateway config
