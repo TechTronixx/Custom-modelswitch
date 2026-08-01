@@ -118,6 +118,22 @@ function Mask-Key([string]$Key) {
 
 function Normalize-BaseUrl([string]$Url) { return $Url.Trim().TrimEnd("/") }
 
+# Cap how much of a server response we echo back on failure. A huge body is
+# noise in a TUI; the status code plus a short excerpt is enough to diagnose.
+function Truncate-Text([string]$Text, [int]$Max = 800) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $Text }
+    if ($Text.Length -le $Max) { return $Text }
+    return $Text.Substring(0, $Max) + "`n...[truncated $($Text.Length - $Max) characters]"
+}
+
+# PS 5.1's ConvertFrom-Json throws on JSON object keys that are the empty string
+# (AgentRouter's pricing payload has one, inside usable_group). Rename such keys
+# to a harmless placeholder instead of regex-stripping a subtree, which is
+# brittle when that subtree contains nested objects.
+function Repair-JsonEmptyKeys([string]$Json) {
+    return [regex]::Replace($Json, '("")\s*:', '"__empty__":')
+}
+
 function Get-ModelsEndpoint([string]$BaseUrl) {
     $b = Normalize-BaseUrl $BaseUrl
     if ($b -match "/v1$") { return "$b/models" }
@@ -145,10 +161,13 @@ function Get-LiveModels([string]$BaseUrl, [string]$ApiKey) {
         )
         $status = & curl.exe @curlArgs
         $exit = $LASTEXITCODE
-        $body = Get-Content $tmp -Raw -ErrorAction SilentlyContinue
+        $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
 
         if ($exit -ne 0 -or $status -notmatch "^2") {
-            throw "Request failed. HTTP $status`n$body"
+            throw "Request failed. HTTP $status`n$(Truncate-Text $body)"
+        }
+        if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "Request succeeded (HTTP $status) but the response body was empty."
         }
 
         $json = $body | ConvertFrom-Json
@@ -193,11 +212,12 @@ function Get-AgentRouterPricingModels([string]$Url) {
         $status = & curl.exe @curlArgs
         $exit = $LASTEXITCODE
         $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
-        if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$body" }
-        # PS 5.1 ConvertFrom-Json throws on the empty-string key inside usable_group; we only need data.
-        $body = $body -replace ',"usable_group"\s*:\s*\{[^}]*\}', ''
-        $json = $body | ConvertFrom-Json
-        if (-not $json.success) { throw "Pricing API returned success=false.`n$body" }
+        if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$(Truncate-Text $body)" }
+        if ([string]::IsNullOrWhiteSpace($body)) { throw "Request succeeded (HTTP $status) but the response body was empty." }
+        # PS 5.1's ConvertFrom-Json throws on empty-string JSON keys; rename them
+        # to a safe placeholder rather than regex-stripping the usable_group subtree.
+        $json = Repair-JsonEmptyKeys $body | ConvertFrom-Json
+        if (-not $json.success) { throw "Pricing API returned success=false.`n$(Truncate-Text $body)" }
         if ($null -eq $json.data) { throw "Pricing API returned no data." }
         return @($json.data)
     }
@@ -209,7 +229,8 @@ function Get-AgentRouterPricingModels([string]$Url) {
 function Backup-File([string]$Path) {
     if (Test-Path $Path) {
         $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $backup = "$Path.backup-$stamp"
+        $ticks = ([DateTime]::UtcNow.Ticks % 10000000).ToString("0000000")
+        $backup = "$Path.backup-$stamp-$ticks"
         Copy-Item $Path $backup -Force
         return $backup
     }
@@ -314,6 +335,9 @@ function Configure-ClaudeDesktop([string]$BaseUrl, [string]$ApiKey, [string]$Mod
 }
 
 function Configure-OpenCode([string]$BaseUrl, [string]$ApiKey, [string]$Model, [string]$ProviderKey, [string]$ProviderName, [string]$NpmPackage) {
+    if ([string]::IsNullOrWhiteSpace($ProviderKey)) { throw "OpenCode provider key is empty; preset is missing 'opencode.providerKey'." }
+    if ([string]::IsNullOrWhiteSpace($NpmPackage)) { throw "OpenCode npm package is empty; preset is missing 'opencode.npmPackage'." }
+
     $path = Join-Path $HOME ".config\opencode\opencode.json"
     $backup = Backup-File $path
     $cfg = Load-JsonObject $path
@@ -490,14 +514,20 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
 # Merge a live-fetched list with a preset's curated fallback (deduped, sorted).
 # Used so a gateway always shows its known-good models even when the live list
 # is partial, and so a failed live fetch degrades to the curated list.
+# NOTE: `return ,@(...)` — the comma protects the empty-array case, which
+# PowerShell otherwise unrolls to $null on its way out of the function.
 function Merge-Models {
     param($Live, $Curated)
-    @( @($Live) + @($Curated) | Where-Object { $_ } | Sort-Object -Unique )
+    return ,@( @($Live) + @($Curated) | Where-Object { $_ } | Sort-Object -Unique )
 }
 
 # Fetch the live model list for a preset, returning per-client lists.
 # Presets with modelsApiUrl (AgentRouter) hit the public pricing JSON and split
-# models by supported_endpoint_types; others (EuroModels, Custom) use /v1/models.
+# models by supported_endpoint_types; all other presets (EuroModels, Custom)
+# share one OpenAI-compatible /v1/models endpoint, so the same list is offered
+# to both clients. The claude block's baseUrl is for the Anthropic-compatible
+# root and has no model-list endpoint of its own, so we fetch from the opencode
+# (OpenAI-compatible) base URL instead.
 function Fetch-PresetModels {
     param($Preset, [string]$ApiKey)
     if ($Preset.modelsApiUrl) {
@@ -576,7 +606,8 @@ function Show-Current {
     # Claude Code also reads OS env vars; show what it actually inherits, and flag any divergence.
     $osBase = $env:ANTHROPIC_BASE_URL
     if ($osBase) {
-        $same = ($osBase -eq [string]$c.env.ANTHROPIC_BASE_URL)
+        $cfgBase = if ($null -eq $c) { "" } else { [string]$c.env.ANTHROPIC_BASE_URL }
+        $same = ($osBase -eq $cfgBase)
         $osTag = if ($same) { "matches settings.json" } else { "DIFFERS from settings.json" }
         $osColor = if ($same) { "DarkGray" } else { "Yellow" }
         Write-Host "    OS env:   ANTHROPIC_BASE_URL=$osBase ($osTag)" -ForegroundColor $osColor
@@ -676,21 +707,41 @@ function Show-Current {
 
 # ---------- presets ----------
 
+# Validate one preset's structure so a malformed entry fails with a useful
+# message instead of null-dereferencing downstream. Returns nothing; throws on
+# the first problem.
+function Assert-PresetValid($Preset) {
+    $label = if ($Preset.label) { [string]$Preset.label } else { "<untitled>" }
+    $base = "Preset '$label' is invalid:"
+
+    if (-not $Preset.id) { throw "$base missing 'id'." }
+    foreach ($client in @("claude", "opencode")) {
+        $block = $Preset.PSObject.Properties[$client]
+        if ($null -eq $block -or $null -eq $block.Value) { throw "$base missing '$client' block." }
+        if ([string]::IsNullOrWhiteSpace([string]$block.Value.baseUrl)) { throw "$base '$client.baseUrl' is empty." }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Preset.opencode.providerKey)) { throw "$base 'opencode.providerKey' is empty." }
+    if ([string]::IsNullOrWhiteSpace([string]$Preset.opencode.npmPackage)) { throw "$base 'opencode.npmPackage' is empty." }
+}
+
 function Load-Presets {
     $path = Join-Path $PSScriptRoot "AI-Config-Presets.json"
     if (!(Test-Path $path)) {
         Write-Host "Preset file not found: $path" -ForegroundColor Red
         exit 1
     }
-    try { return (Get-Content $path -Raw | ConvertFrom-Json).presets }
+    try { $presets = @((Get-Content $path -Raw | ConvertFrom-Json).presets) }
     catch {
         Write-Host "Preset file is invalid JSON: $path" -ForegroundColor Red
         exit 1
     }
+    foreach ($p in $presets) { Assert-PresetValid $p }
+    return $presets
 }
 
 function New-CustomPreset([string]$Url) {
     [PSCustomObject]@{
+        id = "custom"
         label = "Custom"
         dashboard = $null
         fetchModels = $true
@@ -748,12 +799,16 @@ while ($true) {
     # needs); fall back to a prompt only for presets that don't define one.
     $codexProviderKey = $preset.opencode.providerKey
     $codexProviderName = $preset.opencode.providerName
-    if ($doCodex -and [string]::IsNullOrWhiteSpace($codexProviderKey)) {
-        while ([string]::IsNullOrWhiteSpace($codexProviderKey)) {
-            $codexProviderKey = (Read-Host "Codex provider key (for [model_providers.<key>])").Trim()
+    if ($doCodex) {
+        if ([string]::IsNullOrWhiteSpace($codexProviderKey)) {
+            while ([string]::IsNullOrWhiteSpace($codexProviderKey)) {
+                $codexProviderKey = (Read-Host "Codex provider key (for [model_providers.<key>])").Trim()
+            }
         }
-        while ([string]::IsNullOrWhiteSpace($codexProviderName)) {
-            $codexProviderName = (Read-Host "Codex provider display name").Trim()
+        if ([string]::IsNullOrWhiteSpace($codexProviderName)) {
+            while ([string]::IsNullOrWhiteSpace($codexProviderName)) {
+                $codexProviderName = (Read-Host "Codex provider display name").Trim()
+            }
         }
     }
 
