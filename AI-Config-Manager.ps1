@@ -473,7 +473,7 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
     # for tools inherit it.
     $toml = Set-TomlEnvPolicyValue $toml $envKey $ApiKey
     Ensure-Parent $configPath
-    Set-Content -Path $configPath -Value $toml -Encoding UTF8
+    [IO.File]::WriteAllText($configPath, $toml, (New-Object Text.UTF8Encoding($false)))
 
     # env_key is resolved against the REAL process environment at Codex startup,
     # not the config's shell policy block. Persist a User env var so the provider
@@ -744,9 +744,11 @@ while ($true) {
 
     # Never pass the reserved built-in ID "openai" as a provider key — Codex
     # rejects the whole config if a custom provider reuses a built-in ID.
-    $codexProviderKey = if ($preset.id -eq "agentrouter") { "agentrouter" } elseif ($preset.id -eq "euromodels") { "euromodels" } else { $null }
-    $codexProviderName = if ($preset.id -eq "agentrouter") { "agentrouter" } elseif ($preset.id -eq "euromodels") { "euromodels" } else { $null }
-    if ($doCodex -and $preset.id -eq $null) {
+    # Provider key/name come from the preset's opencode block (same value Codex
+    # needs); fall back to a prompt only for presets that don't define one.
+    $codexProviderKey = $preset.opencode.providerKey
+    $codexProviderName = $preset.opencode.providerName
+    if ($doCodex -and [string]::IsNullOrWhiteSpace($codexProviderKey)) {
         while ([string]::IsNullOrWhiteSpace($codexProviderKey)) {
             $codexProviderKey = (Read-Host "Codex provider key (for [model_providers.<key>])").Trim()
         }
