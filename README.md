@@ -112,7 +112,8 @@ Field notes:
 
 ## Development
 
-Run the built-in self-test for the scroll-window math (no terminal needed):
+Run the built-in self-test for the scroll-window math, TOML/JSON writers, model
+merging, URL handling, backup, and validation (no terminal needed):
 
 ```powershell
 powershell -File .\AI-Config-Manager.ps1 -SelfTest

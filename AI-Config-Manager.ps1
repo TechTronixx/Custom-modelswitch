@@ -26,22 +26,6 @@ function Get-ScrollWindow {
     return $CurrentTop
 }
 
-# Runnable checks for the non-trivial scroll math. Run: powershell -File .\AI-Config-Manager.ps1 -SelfTest
-if ($SelfTest) {
-    function Assert-Equal($a, $b, $msg) {
-        if ($a -ne $b) { Write-Host "FAIL: $msg (expected $b, got $a)" -ForegroundColor Red; exit 1 }
-        Write-Host "ok: $msg" -ForegroundColor DarkGray
-    }
-    Assert-Equal (Get-ScrollWindow 5 10 5 0) 1 "down: selection just past window"
-    Assert-Equal (Get-ScrollWindow 9 10 5 0) 5 "down: selection near end"
-    Assert-Equal (Get-ScrollWindow 0 10 5 3) 0 "up: selection above window"
-    Assert-Equal (Get-ScrollWindow 0 3 5 0) 0 "count fits page"
-    Assert-Equal (Get-ScrollWindow 2 100 5 50) 2 "up: from far window"
-    Assert-Equal (Get-ScrollWindow 3 100 5 0) 0 "within window: no change"
-    Write-Host "All self-test checks passed." -ForegroundColor Green
-    exit 0
-}
-
 # ---------- UI helpers ----------
 
 function Write-Banner([string]$Title) {
@@ -851,6 +835,96 @@ function New-CustomPreset([string]$Url) {
         claude    = [PSCustomObject]@{ baseUrl = $Url; curatedModels = @() }
         opencode  = [PSCustomObject]@{ baseUrl = $Url; providerKey = "custom"; providerName = "Custom"; npmPackage = "@ai-sdk/openai-compatible"; curatedModels = @() }
     }
+}
+
+# ---------- self-test ----------
+# Offline checks for the non-trivial helpers (scroll math, TOML/JSON writers,
+# model merging, URL handling, backup, validation). Run without a TTY:
+#   powershell -File .\AI-Config-Manager.ps1 -SelfTest
+if ($SelfTest) {
+    function Assert-Equal($a, $b, $msg) {
+        if ($a -ne $b) { Write-Host "FAIL: $msg (expected '$b', got '$a')" -ForegroundColor Red; exit 1 }
+        Write-Host "ok: $msg" -ForegroundColor DarkGray
+    }
+    function Assert-True($cond, $msg) {
+        if (-not $cond) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
+        Write-Host "ok: $msg" -ForegroundColor DarkGray
+    }
+
+    # Scroll-window math
+    Assert-Equal (Get-ScrollWindow 5 10 5 0) 1 "down: selection just past window"
+    Assert-Equal (Get-ScrollWindow 9 10 5 0) 5 "down: selection near end"
+    Assert-Equal (Get-ScrollWindow 0 10 5 3) 0 "up: selection above window"
+    Assert-Equal (Get-ScrollWindow 0 3 5 0) 0 "count fits page"
+    Assert-Equal (Get-ScrollWindow 2 100 5 50) 2 "up: from far window"
+    Assert-Equal (Get-ScrollWindow 3 100 5 0) 0 "within window: no change"
+
+    # URL / endpoint handling
+    Assert-Equal (Get-ModelsEndpoint "https://x.com/v1") "https://x.com/v1/models" "models endpoint keeps existing /v1"
+    Assert-Equal (Get-ModelsEndpoint "https://x.com") "https://x.com/v1/models" "models endpoint appends /v1"
+    Assert-Equal (Get-ModelsEndpoint "https://x.com/") "https://x.com/v1/models" "models endpoint strips trailing slash"
+
+    # Model merging
+    Assert-Equal ((Merge-Models @("b","a","b") @("a","c")) -join ",") "a,b,c" "merge dedupes and sorts"
+    Assert-Equal (Merge-Models $null $null).Count 0 "merge handles null inputs"
+
+    # TOML root-vs-table placement (root keys must precede the first [table])
+    $t1 = "[model_providers.custom]`r`nname = `"x`"`r`n"
+    $t2 = Set-TomlValue $t1 "model" "gpt-5"
+    Assert-True ($t2.StartsWith("model = `"gpt-5`"")) "TOML root key placed before table"
+    $t3 = Set-TomlValue $t2 "model" "other"
+    Assert-True (($t3 -match "(?m)^model = `"other`"\s*$") -and ($t3 -notmatch "other.*model")) "TOML root key replaced in place"
+    $t4 = Set-TomlBareValue $t3 "disable_response_storage" "true"
+    Assert-True ($t4 -match "(?m)^disable_response_storage = true\s*$") "TOML bare boolean written unquoted"
+
+    # TOML env-policy table append + replace
+    $t5 = Set-TomlEnvPolicyValue "model = `"x`"`r`n" "MY_API_KEY" "secret"
+    Assert-True ($t5 -match "(?m)^\[shell_environment_policy\.set\]") "TOML env-policy table appended"
+    $t6 = Set-TomlEnvPolicyValue $t5 "MY_API_KEY" "newsecret"
+    Assert-True (($t6 -match "(?m)^MY_API_KEY = `"newsecret`"\s*$") -and ($t6 -notmatch "MY_API_KEY = `"secret`"")) "TOML env-policy key replaced"
+
+    # JSON sanitizer (PS 5.1 rejects empty-string keys)
+    $sanitized = Repair-JsonEmptyKeys '{"success":true,"data":[],"usable_group":{"":["x"]}}'
+    Assert-True (($sanitized -match '"__empty__":\["x"\]') -and ($sanitized -notmatch '""\s*:')) "empty-string key renamed to placeholder"
+    $null = $sanitized | ConvertFrom-Json
+    Assert-True $true "sanitized JSON parses without error"
+
+    # Error body truncation
+    Assert-Equal (Truncate-Text "short") "short" "truncate leaves short text alone"
+    Assert-True ((Truncate-Text ("a" * 1000)).Length -lt 1000) "truncate caps long text"
+
+    # Backup: distinct names even within the same second
+    $tmpDir = Join-Path ([IO.Path]::GetTempPath()) ("aimg-selftest-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
+    try {
+        $f = Join-Path $tmpDir "cfg.json"
+        Set-Content $f "{}"
+        $b1 = Backup-File $f
+        $b2 = Backup-File $f
+        Assert-True (Test-Path $b1) "backup file created"
+        Assert-True ($b1 -ne $b2) "backup names do not collide"
+
+        # Save-Json must be BOM-less (the Claude Desktop app rejects a BOM)
+        $jf = Join-Path $tmpDir "out.json"
+        Save-Json ([PSCustomObject]@{ a = 1; b = @(1,2) }) $jf
+        $bytes = [IO.File]::ReadAllBytes($jf)
+        Assert-True ($bytes[0] -ne 0xEF -and $bytes[0] -ne 0xBB) "Save-Json writes BOM-less UTF-8"
+    } finally { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+    # Preset validation
+    $good = [PSCustomObject]@{
+        id = "p"; label = "P"
+        claude  = [PSCustomObject]@{ baseUrl = "https://a.com"; curatedModels = @() }
+        opencode = [PSCustomObject]@{ baseUrl = "https://a.com/v1"; providerKey = "p"; providerName = "P"; npmPackage = "@ai-sdk/openai-compatible"; curatedModels = @() }
+    }
+    Assert-True ($null -eq (Assert-PresetValid $good)) "valid preset accepted"
+    $bad = [PSCustomObject]@{ id = ""; label = "Bad"; claude = [PSCustomObject]@{ baseUrl = $null }; opencode = [PSCustomObject]@{ baseUrl = "x"; providerKey = ""; providerName = ""; npmPackage = "" } }
+    $badThrew = $false
+    try { Assert-PresetValid $bad } catch { $badThrew = $true }
+    Assert-True $badThrew "invalid preset rejected"
+
+    Write-Host "All self-test checks passed." -ForegroundColor Green
+    exit 0
 }
 
 # ---------- main loop ----------
