@@ -69,6 +69,12 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 Pick a gateway from the list, or choose **Custom base URL** to enter one at
 runtime. Then enter your API key and pick a model.
 
+## Screenshots
+
+![Main menu](images/01-main-menu.png)
+
+![Select gateway](images/02-select-gateway.png)
+
 ## Updates
 
 On startup the script checks the latest GitHub release and shows a notice in the
