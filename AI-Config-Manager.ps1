@@ -5,8 +5,9 @@
 # launch Hermes Desktop's own model setup. Presets live in AI-Config-Presets.json;
 # model lists are fetched live when the gateway allows it, with curated fallbacks.
 #
-# Requires Windows PowerShell 5.1+ or PowerShell 7+, and curl.exe (bundled with
-# Windows 10/11). Existing config files are backed up before every write.
+# Requires Windows PowerShell 5.1+ or PowerShell 7+, and curl (curl.exe is
+# bundled with Windows 10/11; pwsh's curl on Linux/macOS). Existing config files
+# are backed up before every write.
 #
 # Usage:   powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
 # Selftest: powershell -File .\AI-Config-Manager.ps1 -SelfTest
@@ -16,6 +17,13 @@ param([switch]$SelfTest)
 $ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "AI Config Manager"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Platform detection (works in both Windows PowerShell 5.1 and pwsh 7+).
+$script:IsWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ((Get-Variable IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
+$script:IsLinux   = (Get-Variable IsLinux   -ErrorAction SilentlyContinue) -and $IsLinux
+$script:IsMacOS   = (Get-Variable IsMacOS   -ErrorAction SilentlyContinue) -and $IsMacOS
+$script:CurlBin   = if ($script:IsWindows) { 'curl.exe' } else { 'curl' }
+
 
 # Pure scroll-window math (extracted so it can be self-tested without a TTY).
 function Get-ScrollWindow {
@@ -143,7 +151,7 @@ function Get-LiveModels([string]$BaseUrl, [string]$ApiKey) {
             "-w", "%{http_code}",
             $endpoint
         )
-        $status = & curl.exe @curlArgs
+        $status = & $script:CurlBin @curlArgs
         $exit = $LASTEXITCODE
         $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
 
@@ -193,7 +201,7 @@ function Get-AgentRouterPricingModels([string]$Url) {
             "-w", "%{http_code}",
             $Url
         )
-        $status = & curl.exe @curlArgs
+        $status = & $script:CurlBin @curlArgs
         $exit = $LASTEXITCODE
         $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
         if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$(Truncate-Text $body)" }
@@ -291,8 +299,25 @@ function Configure-Claude([string]$BaseUrl, [string]$ApiKey, [string]$Model) {
 #   inferenceGatewayAuthScheme   = "x-api-key" | "bearer" | "sso"
 #   inferenceModels              = [ "model-id", ... ]
 # We rewrite that entry (backed up first). The app picks it up on next launch.
+# Locate the Claude Desktop config root per platform. Windows uses the 3P-mode
+# configLibrary under LOCALAPPDATA; macOS and Linux use the app's config dir,
+# preferring the 3P-mode "Claude-3p" folder when present (macOS apps historically
+# wrote under "Claude").
+function Get-ClaudeDesktopConfigDir {
+    if ($script:IsWindows) {
+        return Join-Path $env:LOCALAPPDATA "Claude-3p"
+    }
+    if ($script:IsMacOS) {
+        return Join-Path $HOME "Library/Application Support/Claude"
+    }
+    $base = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME ".config" }
+    $c3p = Join-Path $base "Claude-3p"
+    if (Test-Path $c3p) { return $c3p }
+    return Join-Path $base "Claude"
+}
+
 function Configure-ClaudeDesktop([string]$BaseUrl, [string]$ApiKey, [string]$Model, [string]$AuthScheme) {
-    $dir = Join-Path $env:LOCALAPPDATA "Claude-3p"
+    $dir = Get-ClaudeDesktopConfigDir
     $libraryDir = Join-Path $dir "configLibrary"
     $metaPath = Join-Path $libraryDir "_meta.json"
     if (!(Test-Path $metaPath)) {
@@ -322,7 +347,7 @@ function Configure-OpenCode([string]$BaseUrl, [string]$ApiKey, [string]$Model, [
     if ([string]::IsNullOrWhiteSpace($ProviderKey)) { throw "OpenCode provider key is empty; preset is missing 'opencode.providerKey'." }
     if ([string]::IsNullOrWhiteSpace($NpmPackage)) { throw "OpenCode npm package is empty; preset is missing 'opencode.npmPackage'." }
 
-    $path = Join-Path $HOME ".config\opencode\opencode.json"
+    $path = Join-Path $HOME ".config/opencode/opencode.json"
     $backup = Backup-File $path
     $cfg = Load-JsonObject $path
 
@@ -486,8 +511,23 @@ function Configure-Codex([string]$BaseUrl, [string]$ApiKey, [string]$Model, [str
     # env_key is resolved against the REAL process environment at Codex startup,
     # not the config's shell policy block. Persist a User env var so the provider
     # can find the key. (Takes effect only after the app is fully restarted.)
-    [Environment]::SetEnvironmentVariable($envKey, $ApiKey, "User")
-    [Environment]::SetEnvironmentVariable($envKey, $ApiKey, "Process")
+    # Windows persists via the registry; Linux/macOS append an export to the
+    # user's shell rc (detected by an existing config file) since there is no
+    # equivalent user-wide registry.
+    if ($script:IsWindows) {
+        [Environment]::SetEnvironmentVariable($envKey, $ApiKey, "User")
+        [Environment]::SetEnvironmentVariable($envKey, $ApiKey, "Process")
+    } else {
+        $rcFile = @("$HOME/.bashrc", "$HOME/.zshrc", "$HOME/.profile") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $rcFile) { $rcFile = "$HOME/.profile" }
+        $exportLine = "export $envKey=`"$ApiKey`""
+        $rcText = if (Test-Path $rcFile) { Get-Content $rcFile -Raw } else { "" }
+        if ($rcText -notmatch [regex]::Escape($envKey)) {
+            if ($rcText -and -not $rcText.EndsWith("`n")) { $rcText += "`n" }
+            [IO.File]::AppendAllText($rcFile, "`n# Added by AI Config Manager`n$exportLine`n", (New-Object Text.UTF8Encoding($false)))
+        }
+        Write-Host "  Persisted API key in $rcFile (restart your shell or run: source $rcFile)" -ForegroundColor DarkGray
+    }
 
     return @(
         @{ Path=$authPath; Backup=$authBackup }
@@ -608,13 +648,13 @@ function Show-Current {
 
     Write-Host ""
     Write-Host "  Claude Desktop: 3P gateway config" -ForegroundColor Gray
-    $cdDir = Join-Path $env:LOCALAPPDATA "Claude-3p"
-    $cdMeta = Join-Path $cdDir "configLibrary\_meta.json"
+    $cdDir = Get-ClaudeDesktopConfigDir
+    $cdMeta = Join-Path $cdDir "configLibrary/_meta.json"
     if (Test-Path $cdMeta) {
         try {
             $cdM = Get-Content $cdMeta -Raw | ConvertFrom-Json
             $cdId = [string]$cdM.appliedId
-            $cdCfgPath = Join-Path $cdDir "configLibrary\$cdId.json"
+            $cdCfgPath = Join-Path $cdDir "configLibrary/$cdId.json"
             if ($cdId -and (Test-Path $cdCfgPath)) {
                 $cdCfg = Get-Content $cdCfgPath -Raw | ConvertFrom-Json
                 Write-Host "    Config: $cdCfgPath"
@@ -631,7 +671,7 @@ function Show-Current {
         Write-Host "    No configLibrary found (Claude Desktop not installed or not launched)." -ForegroundColor DarkGray
     }
 
-    $op = Join-Path $HOME ".config\opencode\opencode.json"
+    $op = Join-Path $HOME ".config/opencode/opencode.json"
     Write-Host "  OpenCode: $op" -ForegroundColor Gray
     if (Test-Path $op) {
         try {
@@ -679,9 +719,9 @@ function Show-Current {
     } else { Write-Host "    No config.toml found." -ForegroundColor DarkGray }
 
     $hermesCandidates = @(
-        (Join-Path $HOME ".hermes\config.toml"),
-        (Join-Path $HOME ".config\hermes\config.toml"),
-        (Join-Path $HOME ".config\hermes\config.json")
+        (Join-Path $HOME ".hermes/config.toml"),
+        (Join-Path $HOME ".config/hermes/config.toml"),
+        (Join-Path $HOME ".config/hermes/config.json")
     ) | Where-Object { Test-Path $_ }
     if ($hermesCandidates.Count -gt 0) {
         Write-Host "    Hermes config: $($hermesCandidates -join ', ')" -ForegroundColor DarkGray
@@ -697,15 +737,15 @@ function Get-ToolConfigPaths([string]$Tool) {
     $claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
     switch ($Tool) {
         "Claude Code"    { return ,(Join-Path $claudeDir "settings.json") }
-        "OpenCode"       { return ,(Join-Path $HOME ".config\opencode\opencode.json") }
-        "Codex"          { Write-Output (Join-Path $HOME ".codex\auth.json"); return (Join-Path $HOME ".codex\config.toml") }
+        "OpenCode"       { return ,(Join-Path $HOME ".config/opencode/opencode.json") }
+        "Codex"          { Write-Output (Join-Path $HOME ".codex/auth.json"); return (Join-Path $HOME ".codex/config.toml") }
         "Claude Desktop" {
-            $dir = Join-Path $env:LOCALAPPDATA "Claude-3p"
-            $metaPath = Join-Path $dir "configLibrary\_meta.json"
+            $dir = Get-ClaudeDesktopConfigDir
+            $metaPath = Join-Path $dir "configLibrary/_meta.json"
             if (Test-Path $metaPath) {
                 try {
                     $appliedId = [string]((Get-Content $metaPath -Raw | ConvertFrom-Json).appliedId)
-                    if ($appliedId) { return ,(Join-Path $dir "configLibrary\$appliedId.json") }
+                    if ($appliedId) { return ,(Join-Path $dir "configLibrary/$appliedId.json") }
                 } catch { }
             }
             return @()
