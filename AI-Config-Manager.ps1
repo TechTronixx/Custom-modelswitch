@@ -705,6 +705,109 @@ function Show-Current {
     Pause-Screen
 }
 
+# ---------- backup restore ----------
+
+# Map a tool name to the config file path(s) the writers touch. Used by
+# Restore-Backup to find which *.backup-* files belong to which tool.
+function Get-ToolConfigPaths([string]$Tool) {
+    $claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
+    switch ($Tool) {
+        "Claude Code"    { return ,(Join-Path $claudeDir "settings.json") }
+        "OpenCode"       { return ,(Join-Path $HOME ".config\opencode\opencode.json") }
+        "Codex"          { Write-Output (Join-Path $HOME ".codex\auth.json"); return (Join-Path $HOME ".codex\config.toml") }
+        "Claude Desktop" {
+            $dir = Join-Path $env:LOCALAPPDATA "Claude-3p"
+            $metaPath = Join-Path $dir "configLibrary\_meta.json"
+            if (Test-Path $metaPath) {
+                try {
+                    $appliedId = [string]((Get-Content $metaPath -Raw | ConvertFrom-Json).appliedId)
+                    if ($appliedId) { return ,(Join-Path $dir "configLibrary\$appliedId.json") }
+                } catch { }
+            }
+            return @()
+        }
+        default { return @() }
+    }
+}
+
+# Given a target config path, return the newest matching "*.backup-*" file.
+function Get-LatestBackup([string]$TargetPath) {
+    $pattern = "$TargetPath.backup-*"
+    $backups = @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^[^\\/]+\.backup-\d{8}-\d{6}-\d+$" } |
+        Sort-Object LastWriteTime -Descending)
+    if ($backups.Count -eq 0) { return $null }
+    return $backups[0]
+}
+
+function Restore-Backup {
+    $toolIdx = Show-Menu -Title "Restore Last Backup" -Options @(
+        "Claude Code",
+        "OpenCode",
+        "Codex",
+        "Claude Desktop",
+        "Back"
+    )
+    if ($toolIdx -eq -1 -or $toolIdx -eq 4) { return }
+    $tool = @("Claude Code", "OpenCode", "Codex", "Claude Desktop")[$toolIdx]
+    $paths = @(Get-ToolConfigPaths $tool)
+
+    if ($paths.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No config path known for $tool (Claude Desktop configLibrary not found)." -ForegroundColor Yellow
+        Pause-Screen
+        return
+    }
+
+    # Collect the newest backup across all of this tool's config files.
+    $latest = $null
+    $latestTarget = $null
+    foreach ($p in $paths) {
+        $b = Get-LatestBackup $p
+        if ($b -and ($null -eq $latest -or $b.LastWriteTime -gt $latest.LastWriteTime)) {
+            $latest = $b
+            $latestTarget = $p
+        }
+    }
+
+    if ($null -eq $latest) {
+        Write-Host ""
+        Write-Host "No backups found for $tool." -ForegroundColor Yellow
+        Write-Host "Configurations are backed up automatically before every write."
+        Pause-Screen
+        return
+    }
+
+    Clear-Host
+    Write-Banner "Restore Backup - $tool"
+    Write-Host "  Backup: $($latest.FullName)" -ForegroundColor Gray
+    Write-Host "  Target: $latestTarget" -ForegroundColor Gray
+    Write-Host "  Dated:  $($latest.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $confirm = Show-Menu -Title "Confirm restore" -Options @(
+        "Restore this backup",
+        "Cancel"
+    )
+    if ($confirm -ne 0) { return }
+
+    try {
+        # Back up the current file first so the restore itself is reversible.
+        $currentBackup = Backup-File $latestTarget
+        Copy-Item $latest.FullName $latestTarget -Force
+        Write-Host ""
+        Write-Host "[OK] Restored $tool" -ForegroundColor Green
+        Write-Host "     Target: $latestTarget"
+        if ($currentBackup) { Write-Host "     Prior state backed up: $currentBackup" -ForegroundColor DarkGray }
+        Write-Host ""
+        Write-Host "Restart the tool for changes to take effect." -ForegroundColor Cyan
+    } catch {
+        Write-Host ""
+        Write-Host "Restore failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Pause-Screen
+}
+
 # ---------- presets ----------
 
 # Validate one preset's structure so a malformed entry fails with a useful
@@ -767,11 +870,13 @@ while ($true) {
         "Configure Hermes Desktop",
         "Configure Claude Desktop",
         "Configure Both (Claude Code + OpenCode)",
+        "Restore last backup",
         "View current configuration",
         "Exit"
     )
-    if ($targetIdx -eq -1 -or $targetIdx -eq 7) { break }
-    if ($targetIdx -eq 6) { Show-Current; continue }
+    if ($targetIdx -eq -1 -or $targetIdx -eq 8) { break }
+    if ($targetIdx -eq 6) { Restore-Backup; continue }
+    if ($targetIdx -eq 7) { Show-Current; continue }
     if ($targetIdx -eq 3) { Invoke-HermesModelSetup; continue }
 
     $doClaude = $targetIdx -in 0,5
