@@ -44,8 +44,14 @@ function Write-Banner([string]$Title) {
     $pad = [Math]::Max(0, $w - $title.Length)
     Write-Host ""
     Write-Host ("  " + "═" * $w) -ForegroundColor Cyan
-    Write-Host ("  " + $title + " " * $pad) -ForegroundColor White -BackgroundColor Cyan
+    Write-Host ("  " + $title + " " * $pad) -ForegroundColor Black -BackgroundColor Cyan
     Write-Host ("  " + "═" * $w) -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Write-Separator {
+    Write-Host ""
+    Write-Host ("  " + ("─" * 46)) -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -272,8 +278,6 @@ function Get-AgentRouterPricingModels([string]$Url) {
             $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
             if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$(Truncate-Text $body)" }
             if ([string]::IsNullOrWhiteSpace($body)) { throw "Request succeeded (HTTP $status) but the response body was empty." }
-            # PS 5.1's ConvertFrom-Json throws on empty-string JSON keys; rename them
-            # to a safe placeholder rather than regex-stripping the usable_group subtree.
             $json = Repair-JsonEmptyKeys $body | ConvertFrom-Json
             if (-not $json.success) { throw "Pricing API returned success=false.`n$(Truncate-Text $body)" }
             if ($null -eq $json.data) { throw "Pricing API returned no data." }
@@ -705,7 +709,7 @@ function Show-Current {
         if ($env:ANTHROPIC_MODEL) { Write-Host "              ANTHROPIC_MODEL=$($env:ANTHROPIC_MODEL)" -ForegroundColor DarkGray }
     }
 
-    Write-Host ""
+    Write-Separator
     $osVars = @("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "OPENAI_API_KEY")
     Write-Host "  Windows environment variables" -ForegroundColor Gray
     foreach ($name in $osVars) {
@@ -713,7 +717,7 @@ function Show-Current {
         if ($value) { Write-Host "    $name=$(if ($name -match 'KEY|TOKEN') { Mask-Key $value } else { $value })" }
     }
 
-    Write-Host ""
+    Write-Separator
     Write-Host "  Claude Desktop: 3P gateway config" -ForegroundColor Gray
     $cdDir = Get-ClaudeDesktopConfigDir
     $cdMeta = Join-Path $cdDir "configLibrary/_meta.json"
@@ -738,6 +742,7 @@ function Show-Current {
         Write-Host "    No configLibrary found (Claude Desktop not installed or not launched)." -ForegroundColor DarkGray
     }
 
+    Write-Separator
     $op = Join-Path $HOME ".config/opencode/opencode.json"
     Write-Host "  OpenCode: $op" -ForegroundColor Gray
     if (Test-Path $op) {
@@ -766,7 +771,7 @@ function Show-Current {
     $codexDir = Join-Path $HOME ".codex"
     $codexAuth = Join-Path $codexDir "auth.json"
     $codexConfig = Join-Path $codexDir "config.toml"
-    Write-Host ""
+    Write-Separator
     Write-Host "  Codex: $codexDir" -ForegroundColor Gray
     if (Test-Path $codexAuth) {
         try {
@@ -791,6 +796,7 @@ function Show-Current {
         (Join-Path $HOME ".config/hermes/config.json")
     ) | Where-Object { Test-Path $_ }
     if ($hermesCandidates.Count -gt 0) {
+        Write-Separator
         Write-Host "    Hermes config: $($hermesCandidates -join ', ')" -ForegroundColor DarkGray
     }
     Pause-Screen
