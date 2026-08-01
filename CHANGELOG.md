@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.2.0
+
+- New: **Restore last backup** menu option. Re-applies the newest `*.backup-*`
+  file for the chosen tool, backing up the current state first.
+- New: **OpenRouter** preset ships alongside AgentRouter and EuroModels.
+- New: AgentRouter curated model list refreshed (adds `deepseek-v4-flash-0731`).
+- New: Linux and macOS support. Script detects the platform and uses `curl` /
+  `curl.exe` accordingly; Claude Desktop configLibrary is located per platform;
+  Codex's API key is persisted via a User env var (Windows) or the shell rc
+  (Linux/macOS). One-line installer: `curl .../install.sh | bash`.
+- New: built-in `-SelfTest` now covers the TOML/JSON writers, model merging,
+  URL handling, backup, and validation (25 checks, was 6).
+- New: box-drawing menu borders, banner highlight bar, and a bottom status bar
+  showing scroll position and the version. Model fetches show a spinner.
+- Fix: preset validation rejects empty provider keys / npm packages / base URLs
+  with a clear message instead of writing broken config.
+- Fix: empty-string JSON keys from the AgentRouter pricing API are renamed to a
+  safe placeholder (PS 5.1's `ConvertFrom-Json` rejects them).
+- Fix: backup names never collide even when two backups happen in the same
+  second (tick counter appended).
+- Fix: error bodies are truncated before display so a huge response can't flood
+  the terminal.
+- Fix: `Configure-OpenCode` refuses empty `npmPackage` / `providerKey`.
+
 ## v1.1.0
 
 - New: Configure Claude Desktop app support via the 3P gateway config

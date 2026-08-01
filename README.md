@@ -1,7 +1,7 @@
 # AI Config Manager
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-012456?logo=powershell&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0078D6)
 ![Issues](https://img.shields.io/github/issues/TechTronixx/Custom-modelswitch)
 ![Stars](https://img.shields.io/github/stars/TechTronixx/Custom-modelswitch)
 ![Last commit](https://img.shields.io/github/last-commit/TechTronixx/Custom-modelswitch)
@@ -18,17 +18,25 @@ fallbacks. Every config file is backed up before it's touched.
 
 ## Quick start
 
+**Windows:**
+
 ```powershell
 irm https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/bootstrap.ps1 | iex
 ```
 
-Downloads to `~/AI-Config-Manager` and launches the menu. Re-run the same line
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TechTronixx/Custom-modelswitch/main/install.sh | bash
+```
+
+Both download to `~/AI-Config-Manager` and launch the menu. Re-run the same line
 any time to update and start again.
 
 ## Requirements
 
 - Windows PowerShell 5.1+ or PowerShell 7+
-- `curl.exe` (bundled with Windows 10/11)
+- `curl.exe` on Windows (bundled with Windows 10/11); `curl` on Linux/macOS
 - The tools you want to configure (Claude Code, OpenCode, Codex, Hermes)
 
 ## Install (manual)
@@ -55,6 +63,7 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 | Configure Hermes Desktop | Launches `hermes model` for you to complete manually |
 | Configure Claude Desktop | Writes the 3P gateway config (configLibrary entry) for the Claude Desktop app |
 | Configure Both | Claude Code + OpenCode in one pass |
+| Restore last backup | Restores the most recent backup of the selected tool's config |
 | View current configuration | Shows what each tool is currently pointed at |
 
 Pick a gateway from the list, or choose **Custom base URL** to enter one at
@@ -62,7 +71,8 @@ runtime. Then enter your API key and pick a model.
 
 ## Gateways
 
-The gateway list comes from `AI-Config-Presets.json`. Add your own by copying a
+The gateway list comes from `AI-Config-Presets.json`. Ships with **AgentRouter**,
+**EuroModels**, and **OpenRouter**. Add your own by copying a
 block — no code changes. Each preset defines, per tool, a base URL, provider
 labels, and a curated model fallback list.
 
@@ -94,15 +104,21 @@ Field notes:
 ## Notes
 
 - **Backups:** each write leaves a `*.backup-<timestamp>` copy next to the original.
+- **Restore:** the "Restore last backup" menu option re-applies the newest backup
+  for the chosen tool (backing up the current state first).
 - **Codex sets an environment variable.** Configuring Codex writes a persistent
-  **User** environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key,
-  because Codex resolves its provider key from the real process environment.
-  Fully restart the Codex app afterward for it to take effect.
+  environment variable (e.g. `MYGATEWAY_API_KEY`) holding your API key, because
+  Codex resolves its provider key from the real process environment. On Windows
+  it's set as a User env var; on Linux/macOS it's appended to your shell rc
+  (`~/.bashrc`, `~/.zshrc`, or `~/.profile`). Fully restart the Codex app (and,
+  on Linux/macOS, restart your shell) afterward for it to take effect.
 - **Claude Desktop uses a 3P gateway config.** The Claude Desktop Electron app
-  stores its gateway settings in a managed config file inside
-  `%LOCALAPPDATA%\Claude-3p\configLibrary\`. The script finds the active entry
-  (via `_meta.json`'s `appliedId`) and writes the gateway base URL, API key, auth
-  scheme, and model list. Fully restart the app afterward. If a setup screen
+  stores its gateway settings in a managed config file inside its configLibrary.
+  The script finds the active entry (via `_meta.json`'s `appliedId`) and writes
+  the gateway base URL, API key, auth scheme, and model list. The configLibrary
+  lives under `%LOCALAPPDATA%\Claude-3p\` on Windows, `~/Library/Application
+  Support/Claude/` on macOS, and `~/.config/Claude-3p/` (or `~/.config/Claude/`)
+  on Linux. Fully restart the app afterward. If a setup screen
   appears, go to Menu > Developer > Configure Third-Party Inference to verify the
   config loaded. Each gateway uses its own model ID format, so pick the model
   from the live-fetched list that matches your gateway.
@@ -112,7 +128,8 @@ Field notes:
 
 ## Development
 
-Run the built-in self-test for the scroll-window math (no terminal needed):
+Run the built-in self-test for the scroll-window math, TOML/JSON writers, model
+merging, URL handling, backup, and validation (no terminal needed):
 
 ```powershell
 powershell -File .\AI-Config-Manager.ps1 -SelfTest

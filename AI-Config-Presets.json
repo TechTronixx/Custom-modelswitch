@@ -35,10 +35,30 @@
         "providerKey": "agentrouter",
         "providerName": "AgentRouter",
         "npmPackage": "@ai-sdk/openai-compatible",
-        "curatedModels": ["gpt-5.5", "glm-5.2"]
+        "curatedModels": ["gpt-5.5", "glm-5.2", "deepseek-v4-flash-0731"]
       },
       "codex": {
         "baseUrl": "https://agentrouter.org"
+      }
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "dashboard": "https://openrouter.ai/keys",
+      "fetchModels": true,
+      "claude": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "curatedModels": ["anthropic/claude-opus-4.8", "anthropic/claude-sonnet-4.8", "anthropic/claude-haiku-4.8"]
+      },
+      "opencode": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "providerKey": "openrouter",
+        "providerName": "OpenRouter",
+        "npmPackage": "@ai-sdk/openai-compatible",
+        "curatedModels": ["openai/gpt-5.5", "anthropic/claude-opus-4.8", "deepseek/deepseek-v4-flash-0731"]
+      },
+      "codex": {
+        "baseUrl": "https://openrouter.ai/api/v1"
       }
     }
   ]
