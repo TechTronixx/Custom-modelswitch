@@ -12,7 +12,7 @@
 # Usage:   powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1
 # Selftest: powershell -File .\AI-Config-Manager.ps1 -SelfTest
 
-param([switch]$SelfTest)
+param([switch]$SelfTest, [switch]$SkipVersionCheck)
 
 $ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "AI Config Manager"
@@ -23,7 +23,49 @@ $script:IsWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ((Get-Variable
 $script:IsLinux   = (Get-Variable IsLinux   -ErrorAction SilentlyContinue) -and $IsLinux
 $script:IsMacOS   = (Get-Variable IsMacOS   -ErrorAction SilentlyContinue) -and $IsMacOS
 $script:CurlBin   = if ($script:IsWindows) { 'curl.exe' } else { 'curl' }
-$script:Version   = "1.2.0"
+$script:Version   = "1.2.1"
+
+# Compare two dotted version strings ("v1.2.0" vs "1.2.1"). Returns $true if the
+# first is older than the second. Missing segments count as 0.
+function Test-OlderVersion([string]$Current, [string]$Latest) {
+    $a = @(($Current -replace "^v", "").Split(".")) + @("0", "0", "0")
+    $b = @(($Latest  -replace "^v", "").Split(".")) + @("0", "0", "0")
+    for ($i = 0; $i -lt 3; $i++) {
+        $ai = 0; $bi = 0
+        [void][int]::TryParse($a[$i], [ref]$ai)
+        [void][int]::TryParse($b[$i], [ref]$bi)
+        if ($ai -lt $bi) { return $true }
+        if ($ai -gt $bi) { return $false }
+    }
+    return $false
+}
+
+# Best-effort check of the latest release tag on GitHub. Fails silently offline
+# (returns $null) and never blocks startup for long.
+function Get-LatestVersion {
+    $tag = $null
+    $tmp = [IO.Path]::GetTempFileName()
+    try {
+        $json = & $script:CurlBin "-sS" "--connect-timeout", "5", "--max-time", "10", "-H", "Accept: application/vnd.github+json", "-o", $tmp, "https://api.github.com/repos/TechTronixx/Custom-modelswitch/releases/latest"
+        $null = $json
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $release = Get-Content $tmp -Raw | ConvertFrom-Json
+        $tag = [string]$release.tag_name
+    } catch { return $null }
+    finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    if ([string]::IsNullOrWhiteSpace($tag)) { return $null }
+    return $tag
+}
+
+# Runs the version check once at startup; stores the notice in the script scope.
+function Check-ForUpdate {
+    if ($SkipVersionCheck) { return }
+    $latest = Get-LatestVersion
+    if ($null -eq $latest) { return }
+    if (Test-OlderVersion $script:Version $latest) {
+        $script:UpdateNotice = "Update available: $($script:Version) -> $latest  (github.com/TechTronixx/Custom-modelswitch/releases)"
+    }
+}
 
 
 # Pure scroll-window math (extracted so it can be self-tested without a TTY).
@@ -977,6 +1019,15 @@ if ($SelfTest) {
     Assert-Equal (Get-ModelsEndpoint "https://x.com") "https://x.com/v1/models" "models endpoint appends /v1"
     Assert-Equal (Get-ModelsEndpoint "https://x.com/") "https://x.com/v1/models" "models endpoint strips trailing slash"
 
+    # Version comparison
+    Assert-True (Test-OlderVersion "1.2.0" "1.2.1") "version detects patch bump"
+    Assert-True (Test-OlderVersion "1.2.0" "1.3.0") "version detects minor bump"
+    Assert-True (Test-OlderVersion "1.2.0" "2.0.0") "version detects major bump"
+    Assert-True (Test-OlderVersion "v1.2.0" "1.2.1") "version ignores leading v"
+    Assert-True (-not (Test-OlderVersion "1.2.1" "1.2.0")) "version not older when equal-or-newer"
+    Assert-True (-not (Test-OlderVersion "1.2.0" "1.2.0")) "version equal is not older"
+    Assert-True (-not (Test-OlderVersion "1.2" "1.2.0")) "version missing segment counts as 0"
+
     # Model merging
     Assert-Equal ((Merge-Models @("b","a","b") @("a","c")) -join ",") "a,b,c" "merge dedupes and sorts"
     Assert-Equal (Merge-Models $null $null).Count 0 "merge handles null inputs"
@@ -1048,6 +1099,8 @@ if ([Console]::IsInputRedirected) {
 }
 
 $presets = Load-Presets
+$script:UpdateNotice = $null
+Check-ForUpdate
 
 while ($true) {
     $targetIdx = Show-Menu -Title "AI Config Manager" -Options @(
@@ -1060,7 +1113,7 @@ while ($true) {
         "Restore last backup",
         "View current configuration",
         "Exit"
-    )
+    ) -Header @($script:UpdateNotice | Where-Object { $_ })
     if ($targetIdx -eq -1 -or $targetIdx -eq 8) { break }
     if ($targetIdx -eq 6) { Restore-Backup; continue }
     if ($targetIdx -eq 7) { Show-Current; continue }

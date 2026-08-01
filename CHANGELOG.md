@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.1
+
+- New: **Update check on startup**. The script compares its version against the
+  latest GitHub release and shows a notice in the menu header when an update is
+  available. Offline-safe (fails silently). Disable with `-SkipVersionCheck`.
+
 ## v1.2.0
 
 - New: **Restore last backup** menu option. Re-applies the newest `*.backup-*`

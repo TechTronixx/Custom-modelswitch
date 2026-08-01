@@ -69,6 +69,18 @@ Pick an option with the arrow keys, **Enter** to select, **Esc** to go back.
 Pick a gateway from the list, or choose **Custom base URL** to enter one at
 runtime. Then enter your API key and pick a model.
 
+## Updates
+
+On startup the script checks the latest GitHub release and shows a notice in the
+menu header when a newer version exists. The check is offline-safe and fails
+silently. Skip it with `-SkipVersionCheck`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\AI-Config-Manager.ps1 -SkipVersionCheck
+```
+
+To update, re-run the same quick-start line (installer) or `git pull` and re-run.
+
 ## Gateways
 
 The gateway list comes from `AI-Config-Presets.json`. Ships with **AgentRouter**,
