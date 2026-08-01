@@ -12,6 +12,8 @@
   (Linux/macOS). One-line installer: `curl .../install.sh | bash`.
 - New: built-in `-SelfTest` now covers the TOML/JSON writers, model merging,
   URL handling, backup, and validation (25 checks, was 6).
+- New: box-drawing menu borders, banner highlight bar, and a bottom status bar
+  showing scroll position and the version. Model fetches show a spinner.
 - Fix: preset validation rejects empty provider keys / npm packages / base URLs
   with a clear message instead of writing broken config.
 - Fix: empty-string JSON keys from the AgentRouter pricing API are renamed to a

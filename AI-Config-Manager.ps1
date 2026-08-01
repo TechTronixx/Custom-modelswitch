@@ -1,4 +1,4 @@
-# AI Config Manager
+﻿# AI Config Manager
 #
 # Arrow-key TUI to point Claude Code, OpenCode, and Codex at a custom gateway
 # (AgentRouter, EuroModels, or any OpenAI/Anthropic-compatible base URL), and to
@@ -23,6 +23,7 @@ $script:IsWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ((Get-Variable
 $script:IsLinux   = (Get-Variable IsLinux   -ErrorAction SilentlyContinue) -and $IsLinux
 $script:IsMacOS   = (Get-Variable IsMacOS   -ErrorAction SilentlyContinue) -and $IsMacOS
 $script:CurlBin   = if ($script:IsWindows) { 'curl.exe' } else { 'curl' }
+$script:Version   = "1.2.0"
 
 
 # Pure scroll-window math (extracted so it can be self-tested without a TTY).
@@ -37,9 +38,14 @@ function Get-ScrollWindow {
 # ---------- UI helpers ----------
 
 function Write-Banner([string]$Title) {
+    $w = [Console]::WindowWidth - 4
+    $title = " $Title "
+    $title = if ($title.Length -ge $w) { $title.Substring(0, $w - 1) } else { $title }
+    $pad = [Math]::Max(0, $w - $title.Length)
     Write-Host ""
-    Write-Host "  $Title" -ForegroundColor Cyan
-    Write-Host "  $([string]::new([char]0x2500, $Title.Length + 2))" -ForegroundColor Cyan
+    Write-Host ("  " + "═" * $w) -ForegroundColor Cyan
+    Write-Host ("  " + $title + " " * $pad) -ForegroundColor White -BackgroundColor Cyan
+    Write-Host ("  " + "═" * $w) -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -56,25 +62,50 @@ function Show-Menu {
     while ($true) {
         Clear-Host
         Write-Banner $Title
-        foreach ($h in $Header) { Write-Host "  $h" -ForegroundColor DarkGray }
-        if ($Header.Count -gt 0) { Write-Host "" }
 
-        $pageSize = [Math]::Max(5, [Console]::WindowHeight - 9 - $Header.Count)
+        $pageSize = [Math]::Max(5, [Console]::WindowHeight - 11 - $Header.Count)
         $top = Get-ScrollWindow $selected $Options.Count $pageSize $top
         $last = [Math]::Min($top + $pageSize, $Options.Count) - 1
+
+        # Compute box width from the widest visible line.
+        $lines = @()
+        foreach ($h in $Header) { $lines += ("  " + $h) }
+        if ($Header.Count -gt 0) { $lines += "" }
+        for ($i = $top; $i -le $last; $i++) {
+            $lines += ("    " + $Options[$i])
+        }
+        $scrollNote = ""
+        if ($top -gt 0 -or $last -lt $Options.Count - 1) {
+            $scrollNote = "  ($($top + 1)-$($last + 1) of $($Options.Count))"
+            $lines += ""
+            $lines += $scrollNote
+        }
+        $inner = ($lines | Measure-Object -Property Length -Maximum).Maximum
+        $inner = [Math]::Min($inner, [Console]::WindowWidth - 6)
+        $inner = [Math]::Max($inner, 20)
+
+        Write-Host ("  " + "╔" + "═" * $inner + "╗") -ForegroundColor Cyan
+        foreach ($h in $Header) {
+            Write-Host ("  ║ " + $h.PadRight($inner - 2) + " ║") -ForegroundColor DarkGray
+        }
+        if ($Header.Count -gt 0) { Write-Host ("  ║" + " " * $inner + "║") }
         for ($i = $top; $i -le $last; $i++) {
             if ($i -eq $selected) {
-                Write-Host (" > {0}" -f $Options[$i]) -ForegroundColor Black -BackgroundColor Cyan
+                Write-Host ("  ║ " + ("  " + $Options[$i]).PadRight($inner - 2) + " ║") -ForegroundColor Black -BackgroundColor Cyan
             } else {
-                Write-Host ("   {0}" -f $Options[$i]) -ForegroundColor Gray
+                Write-Host ("  ║ " + ("  " + $Options[$i]).PadRight($inner - 2) + " ║") -ForegroundColor Gray
             }
         }
-        if ($top -gt 0 -or $last -lt $Options.Count - 1) {
-            Write-Host ""
-            Write-Host "  ($($top + 1)-$($last + 1) of $($Options.Count))" -ForegroundColor DarkGray
+        if ($scrollNote) {
+            Write-Host ("  ║" + " " * $inner + "║")
+            Write-Host ("  ║ " + $scrollNote.Trim().PadRight($inner - 2) + " ║") -ForegroundColor DarkGray
         }
+        Write-Host ("  " + "╚" + "═" * $inner + "╝") -ForegroundColor Cyan
+
+        $pageLabel = if ($scrollNote) { $scrollNote.Trim() } else { "all $($Options.Count)" }
         Write-Host ""
-        Write-Host "  Up/Dn navigate | Enter select | Esc back" -ForegroundColor DarkGray
+        Write-Host ("  " + "↑/↓ move highlight   Enter select   Esc back") -ForegroundColor DarkGray
+        Write-Host ("  " + $pageLabel + "   ·   v$script:Version") -ForegroundColor DarkGray
 
         $key = [Console]::ReadKey($true)
         switch ($key.Key) {
@@ -132,55 +163,91 @@ function Get-ModelsEndpoint([string]$BaseUrl) {
     return "$b/v1/models"
 }
 
+# Run $Action and animate a spinner on its own line until it finishes. The
+# spinner runs in a background runspace and only touches [Console], so it is
+# safe to run alongside the blocking foreground call. Returns $Action's output.
+# Console writes are best-effort: if stdout is redirected, the spinner silently
+# does nothing rather than crashing the script.
+function Invoke-Spinner([string]$Label, [scriptblock]$Action) {
+    Write-Host ""
+    $frames = '|/-\'
+    $rs = [RunspaceFactory]::CreateRunspace()
+    $rs.Open()
+    $spinner = [PowerShell]::Create()
+    $spinner.Runspace = $rs
+    $spinnerScript = {
+        param($label, $frames)
+        try {
+            $i = 0
+            while ($true) {
+                [Console]::Write("`r  $label $($frames[$i++ % 4])")
+                [Threading.Thread]::Sleep(120)
+            }
+        } catch { }
+    }
+    $spinner.AddScript($spinnerScript.ToString()).AddArgument($Label).AddArgument($frames) | Out-Null
+    $async = $spinner.BeginInvoke()
+    try { return & $Action }
+    finally {
+        $spinner.Stop()
+        $spinner.Dispose()
+        $rs.Close()
+        $rs.Dispose()
+        try {
+            [Console]::Write(("`r  $Label  done") + (' ' * 4) + "`r")
+            [Console]::WriteLine()
+        } catch { }
+    }
+}
+
 # ---------- live model fetch ----------
 
 function Get-LiveModels([string]$BaseUrl, [string]$ApiKey) {
     $endpoint = Get-ModelsEndpoint $BaseUrl
-    Write-Host ""
-    Write-Host "Fetching models from: $endpoint" -ForegroundColor DarkGray
+    Invoke-Spinner "Fetching models from $endpoint" {
+        $tmp = [IO.Path]::GetTempFileName()
+        try {
+            $curlArgs = @(
+                "-sS", "--fail-with-body",
+                "--connect-timeout", "15",
+                "--max-time", "45",
+                "-H", "Authorization: Bearer $ApiKey",
+                "-H", "Accept: application/json",
+                "-o", $tmp,
+                "-w", "%{http_code}",
+                $endpoint
+            )
+            $status = & $script:CurlBin @curlArgs
+            $exit = $LASTEXITCODE
+            $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
 
-    $tmp = [IO.Path]::GetTempFileName()
-    try {
-        $curlArgs = @(
-            "-sS", "--fail-with-body",
-            "--connect-timeout", "15",
-            "--max-time", "45",
-            "-H", "Authorization: Bearer $ApiKey",
-            "-H", "Accept: application/json",
-            "-o", $tmp,
-            "-w", "%{http_code}",
-            $endpoint
-        )
-        $status = & $script:CurlBin @curlArgs
-        $exit = $LASTEXITCODE
-        $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
+            if ($exit -ne 0 -or $status -notmatch "^2") {
+                throw "Request failed. HTTP $status`n$(Truncate-Text $body)"
+            }
+            if ([string]::IsNullOrWhiteSpace($body)) {
+                throw "Request succeeded (HTTP $status) but the response body was empty."
+            }
 
-        if ($exit -ne 0 -or $status -notmatch "^2") {
-            throw "Request failed. HTTP $status`n$(Truncate-Text $body)"
+            $json = $body | ConvertFrom-Json
+            $ids = @()
+            if ($null -ne $json.data) {
+                $ids = @($json.data | ForEach-Object {
+                    if ($_ -is [string]) { $_ } elseif ($_.id) { [string]$_.id }
+                })
+            } elseif ($null -ne $json.models) {
+                $ids = @($json.models | ForEach-Object {
+                    if ($_ -is [string]) { $_ }
+                    elseif ($_.id) { [string]$_.id }
+                    elseif ($_.name) { [string]$_.name }
+                })
+            }
+
+            $ids = @($ids | Where-Object { $_ } | Sort-Object -Unique)
+            if ($ids.Count -eq 0) { throw "API responded successfully, but no model IDs were found in data[].id or models[]." }
+            return $ids
         }
-        if ([string]::IsNullOrWhiteSpace($body)) {
-            throw "Request succeeded (HTTP $status) but the response body was empty."
-        }
-
-        $json = $body | ConvertFrom-Json
-        $ids = @()
-        if ($null -ne $json.data) {
-            $ids = @($json.data | ForEach-Object {
-                if ($_ -is [string]) { $_ } elseif ($_.id) { [string]$_.id }
-            })
-        } elseif ($null -ne $json.models) {
-            $ids = @($json.models | ForEach-Object {
-                if ($_ -is [string]) { $_ }
-                elseif ($_.id) { [string]$_.id }
-                elseif ($_.name) { [string]$_.name }
-            })
-        }
-
-        $ids = @($ids | Where-Object { $_ } | Sort-Object -Unique)
-        if ($ids.Count -eq 0) { throw "API responded successfully, but no model IDs were found in data[].id or models[]." }
-        return $ids
+        finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
-    finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
 # AgentRouter exposes its full model list (with IDs and supported endpoints) at a
@@ -188,32 +255,32 @@ function Get-LiveModels([string]$BaseUrl, [string]$ApiKey) {
 # /api/models, this one is NOT client-gated (no 401). Returns data[].model_name
 # and data[].supported_endpoint_types (e.g. ["anthropic","openai"]).
 function Get-AgentRouterPricingModels([string]$Url) {
-    Write-Host ""
-    Write-Host "Fetching model list from: $Url" -ForegroundColor DarkGray
-    $tmp = [IO.Path]::GetTempFileName()
-    try {
-        $curlArgs = @(
-            "-sS", "--fail-with-body",
-            "--connect-timeout", "15",
-            "--max-time", "45",
-            "-H", "Accept: application/json",
-            "-o", $tmp,
-            "-w", "%{http_code}",
-            $Url
-        )
-        $status = & $script:CurlBin @curlArgs
-        $exit = $LASTEXITCODE
-        $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
-        if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$(Truncate-Text $body)" }
-        if ([string]::IsNullOrWhiteSpace($body)) { throw "Request succeeded (HTTP $status) but the response body was empty." }
-        # PS 5.1's ConvertFrom-Json throws on empty-string JSON keys; rename them
-        # to a safe placeholder rather than regex-stripping the usable_group subtree.
-        $json = Repair-JsonEmptyKeys $body | ConvertFrom-Json
-        if (-not $json.success) { throw "Pricing API returned success=false.`n$(Truncate-Text $body)" }
-        if ($null -eq $json.data) { throw "Pricing API returned no data." }
-        return @($json.data)
+    Invoke-Spinner "Fetching model list from $Url" {
+        $tmp = [IO.Path]::GetTempFileName()
+        try {
+            $curlArgs = @(
+                "-sS", "--fail-with-body",
+                "--connect-timeout", "15",
+                "--max-time", "45",
+                "-H", "Accept: application/json",
+                "-o", $tmp,
+                "-w", "%{http_code}",
+                $Url
+            )
+            $status = & $script:CurlBin @curlArgs
+            $exit = $LASTEXITCODE
+            $body = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
+            if ($exit -ne 0 -or $status -notmatch "^2") { throw "Request failed. HTTP $status`n$(Truncate-Text $body)" }
+            if ([string]::IsNullOrWhiteSpace($body)) { throw "Request succeeded (HTTP $status) but the response body was empty." }
+            # PS 5.1's ConvertFrom-Json throws on empty-string JSON keys; rename them
+            # to a safe placeholder rather than regex-stripping the usable_group subtree.
+            $json = Repair-JsonEmptyKeys $body | ConvertFrom-Json
+            if (-not $json.success) { throw "Pricing API returned success=false.`n$(Truncate-Text $body)" }
+            if ($null -eq $json.data) { throw "Pricing API returned no data." }
+            return @($json.data)
+        }
+        finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
     }
-    finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
 # ---------- config writers ----------
